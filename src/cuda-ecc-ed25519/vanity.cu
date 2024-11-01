@@ -43,6 +43,16 @@ bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
 	d += t0;                                        \
 	h = t0 + t1;
 
+__device__ void convert_to_hex(const unsigned char *input, char *output, int length)
+{
+	const char hex_chars[] = "0123456789abcdef";
+	for (int i = 0; i < length; i++)
+	{
+		output[i * 2] = hex_chars[(input[i] >> 4) & 0x0F];
+		output[i * 2 + 1] = hex_chars[input[i] & 0x0F];
+	}
+}
+
 // Funzione device_strlen per calcolare la lunghezza di una stringa in ambiente GPU
 __device__ int device_strlen(const char *str)
 {
@@ -273,11 +283,14 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		int index = atomicAdd(&found_key_count, 1); // Ottiene l'indice per memorizzare la chiave
 		if (index < MAX_KEYS)
 		{
-			// Salva la chiave privata e pubblica in found_keys
-			int offset = 0;
-			for (int k = 0; k < 32; k++) // Chiave privata (32 byte)
-				offset += snprintf(found_keys[index] + offset, 128, "%02x", privatek[k]);
-			snprintf(found_keys[index] + offset, 128 - offset, " %s", key); // Chiave pubblica
+			// Converte la chiave privata in esadecimale e salva la chiave pubblica
+			convert_to_hex(privatek, found_keys[index], 32); // Chiave privata in esadecimale
+			int pub_key_offset = 64;						 // Offset dopo i 64 caratteri della chiave privata
+			for (int j = 0; j < keysize && j < 64; j++)
+			{
+				found_keys[index][pub_key_offset + j] = key[j];
+			}
+			found_keys[index][pub_key_offset + keysize] = '\0'; // Terminazione della stringa
 		}
 	}
 	state[id] = localState;
