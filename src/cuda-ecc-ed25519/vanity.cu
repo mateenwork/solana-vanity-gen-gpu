@@ -279,6 +279,12 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	b58enc(key, &keysize, publick, 32);
 
 	int len_key = device_strlen(key);
+	int suffix_len = device_strlen(suffix);
+
+	// Debug: Stampa la chiave e la sua lunghezza
+	printf("Generated key: %s (length: %d)\n", key, len_key);
+	printf("Suffix to match: %s (length: %d)\n", suffix, suffix_len);
+
 	if (device_strlen(suffix) <= len_key &&
 		device_strcmp(&key[len_key - 4], suffix) == 0)
 
