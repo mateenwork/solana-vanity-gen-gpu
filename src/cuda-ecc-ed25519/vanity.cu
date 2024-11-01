@@ -1,143 +1,283 @@
+#include <vector>
+#include <random>
+#include <chrono>
+#include <iostream>
+#include <ctime>
+#include <assert.h>
+#include <inttypes.h>
+#include <pthread.h>
+#include <stdio.h>
+#include "curand_kernel.h"
 #include "ed25519.h"
-#include "sha512.h"
-#include "ge.h"
-#include "sc.h"
+#include "fixedint.h"
 #include "gpu_common.h"
 #include "gpu_ctx.h"
+#include "keypair.cu"
+#include "sc.cu"
+#include "fe.cu"
+#include "ge.cu"
+#include "sha512.cu"
+#include "../config.h"
 
-static void __device__ __host__
-ed25519_sign_device(unsigned char *signature,
-					const unsigned char *message,
-					size_t message_len,
-					const unsigned char *public_key,
-					const unsigned char *private_key)
+typedef struct
 {
-	sha512_context hash;
-	unsigned char hram[64];
-	unsigned char r[64];
-	ge_p3 R;
+	curandState *states[8];
+} config;
 
-	sha512_init(&hash);
-	sha512_update(&hash, private_key + 32, 32);
-	sha512_update(&hash, message, message_len);
-	sha512_final(&hash, r);
+#define MAX_KEYS 1000
+__device__ char found_keys[MAX_KEYS][512];
+__device__ int found_key_count = 0;
 
-	sc_reduce(r);
-	ge_scalarmult_base(&R, r);
-	ge_p3_tobytes(signature, &R);
+void vanity_setup(config &vanity);
+void vanity_run(config &vanity);
+void __global__ vanity_init(unsigned long long int *seed, curandState *state);
+void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *execution_count);
+bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
 
-	sha512_init(&hash);
-	sha512_update(&hash, signature, 32);
-	sha512_update(&hash, public_key, 32);
-	sha512_update(&hash, message, message_len);
-	sha512_final(&hash, hram);
-
-	sc_reduce(hram);
-	sc_muladd(signature + 32, hram, private_key, r);
+int main(int argc, char const *argv[])
+{
+	ed25519_set_verbose(true);
+	config vanity;
+	vanity_setup(vanity);
+	vanity_run(vanity);
 }
 
-void ed25519_sign(unsigned char *signature,
-				  const unsigned char *message,
-				  size_t message_len,
-				  const unsigned char *public_key,
-				  const unsigned char *private_key)
+std::string getTimeStr()
 {
-	ed25519_sign_device(signature, message, message_len, public_key, private_key);
+	std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+	std::string s(30, '\0');
+	std::strftime(&s[0], s.size(), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+	return s;
 }
 
-__global__ void ed25519_sign_kernel(unsigned char *packets,
-									uint32_t message_size,
-									uint32_t *public_key_offsets,
-									uint32_t *private_key_offsets,
-									uint32_t *message_start_offsets,
-									uint32_t *message_lens,
-									size_t num_transactions,
-									uint8_t *out)
+unsigned long long int makeSeed()
 {
-	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	if (i < num_transactions)
+	unsigned long long int seed = 0;
+	char *pseed = (char *)&seed;
+	std::random_device rd;
+	for (unsigned int b = 0; b < sizeof(seed); b++)
 	{
-		uint32_t message_start_offset = message_start_offsets[i];
-		uint32_t public_key_offset = public_key_offsets[i];
-		uint32_t private_key_offset = private_key_offsets[i];
-		uint32_t message_len = message_lens[i];
+		auto r = rd();
+		char *entropy = (char *)&r;
+		pseed[b] = entropy[0];
+	}
+	return seed;
+}
 
-		ed25519_sign_device(&out[i * SIG_SIZE],
-							&packets[message_start_offset],
-							message_len,
-							&packets[public_key_offset],
-							&packets[private_key_offset]);
+void vanity_setup(config &vanity)
+{
+	int gpuCount = 0;
+	cudaGetDeviceCount(&gpuCount);
+	for (int i = 0; i < gpuCount; ++i)
+	{
+		cudaSetDevice(i);
+		int blockSize = 0, minGridSize = 0, maxActiveBlocks = 0;
+		cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
+		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
+		unsigned long long int rseed = makeSeed();
+		unsigned long long int *dev_rseed;
+		cudaMalloc((void **)&dev_rseed, sizeof(unsigned long long int));
+		cudaMemcpy(dev_rseed, &rseed, sizeof(unsigned long long int), cudaMemcpyHostToDevice);
+		cudaMalloc((void **)&(vanity.states[i]), maxActiveBlocks * blockSize * sizeof(curandState));
+		vanity_init<<<maxActiveBlocks, blockSize>>>(dev_rseed, vanity.states[i]);
 	}
 }
 
-void ed25519_sign_many(const gpu_Elems *elems,
-					   uint32_t num_elems,
-					   uint32_t message_size,
-					   uint32_t total_packets,
-					   uint32_t total_signatures,
-					   const uint32_t *message_lens,
-					   const uint32_t *public_key_offsets,
-					   const uint32_t *private_key_offsets,
-					   const uint32_t *message_start_offsets,
-					   uint8_t *signatures_out,
-					   uint8_t use_non_default_stream)
+void vanity_run(config &vanity)
 {
-	int num_threads_per_block = 64;
-	int num_blocks = ROUND_UP_DIV(total_signatures, num_threads_per_block);
-	size_t sig_out_size = SIG_SIZE * total_signatures;
-
-	if (0 == total_packets)
+	int gpuCount = 0;
+	cudaGetDeviceCount(&gpuCount);
+	unsigned long long int executions_total = 0;
+	unsigned long long int executions_this_iteration;
+	int executions_this_gpu;
+	int *dev_executions_this_gpu[100];
+	int keys_found_total = 0;
+	int keys_found_this_iteration;
+	int *dev_keys_found[100];
+	for (int i = 0; i < MAX_ITERATIONS; ++i)
 	{
-		return;
+		auto start = std::chrono::high_resolution_clock::now();
+		executions_this_iteration = 0;
+		for (int g = 0; g < gpuCount; ++g)
+		{
+			cudaSetDevice(g);
+			int blockSize = 0, minGridSize = 0, maxActiveBlocks = 0;
+			cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
+			cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
+			int *dev_g;
+			cudaMalloc((void **)&dev_g, sizeof(int));
+			cudaMemcpy(dev_g, &g, sizeof(int), cudaMemcpyHostToDevice);
+			cudaMalloc((void **)&dev_keys_found[g], sizeof(int));
+			cudaMalloc((void **)&dev_executions_this_gpu[g], sizeof(int));
+			vanity_scan<<<maxActiveBlocks, blockSize>>>(vanity.states[g], dev_keys_found[g], dev_g, dev_executions_this_gpu[g]);
+		}
+		cudaDeviceSynchronize();
+		int host_key_count;
+		cudaMemcpyFromSymbol(&host_key_count, found_key_count, sizeof(int), 0, cudaMemcpyDeviceToHost);
+		char host_keys[MAX_KEYS][512];
+		cudaMemcpyFromSymbol(host_keys, found_keys, sizeof(char) * MAX_KEYS * 512, 0, cudaMemcpyDeviceToHost);
+		FILE *outputFile = fopen("found_keys.txt", "w");
+		if (outputFile)
+		{
+			for (int i = 0; i < host_key_count; ++i)
+			{
+				fprintf(outputFile, "Key %d: Privata: %.*s Pubblica: %s\n", i + 1, 64, host_keys[i], host_keys[i] + 65);
+			}
+			fclose(outputFile);
+		}
+		else
+		{
+			printf("Errore: impossibile aprire il file per scrivere\n");
+		}
+		auto finish = std::chrono::high_resolution_clock::now();
+		for (int g = 0; g < gpuCount; ++g)
+		{
+			cudaMemcpy(&keys_found_this_iteration, dev_keys_found[g], sizeof(int), cudaMemcpyDeviceToHost);
+			keys_found_total += keys_found_this_iteration;
+			cudaMemcpy(&executions_this_gpu, dev_executions_this_gpu[g], sizeof(int), cudaMemcpyDeviceToHost);
+			executions_this_iteration += executions_this_gpu * ATTEMPTS_PER_EXECUTION;
+			executions_total += executions_this_gpu * ATTEMPTS_PER_EXECUTION;
+		}
+		std::chrono::duration<double> elapsed = finish - start;
+		printf("%s Iteration %d Attempts: %llu in %f at %fcps - Total Attempts %llu - keys found %d\n",
+			   getTimeStr().c_str(), i + 1, executions_this_iteration, elapsed.count(),
+			   executions_this_iteration / elapsed.count(), executions_total, keys_found_total);
+		if (keys_found_total >= STOP_AFTER_KEYS_FOUND)
+		{
+			printf("Enough keys found, Done! \n");
+			exit(0);
+		}
 	}
+}
 
-	uint32_t total_packets_size = total_packets * message_size;
+void __global__ vanity_init(unsigned long long int *rseed, curandState *state)
+{
+	int id = threadIdx.x + (blockIdx.x * blockDim.x);
+	curand_init(*rseed + id, id, 0, &state[id]);
+}
 
-	LOG("signing %d packets sig_size: %zu message_size: %d\n",
-		total_packets, sig_out_size, message_size);
-
-	gpu_ctx_t *gpu_ctx = get_gpu_ctx();
-	verify_ctx_t *cur_ctx = &gpu_ctx->verify_ctx;
-
-	cudaStream_t stream = 0;
-	if (0 != use_non_default_stream)
+void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *exec_count)
+{
+	int id = threadIdx.x + (blockIdx.x * blockDim.x);
+	atomicAdd(exec_count, 1);
+	ge_p3 A;
+	curandState localState = state[id];
+	unsigned char seed[32] = {0};
+	unsigned char publick[32] = {0};
+	unsigned char privatek[64] = {0};
+	char key[256] = {0};
+	for (int i = 0; i < 32; ++i)
 	{
-		stream = gpu_ctx->stream;
+		float random = curand_uniform(&localState);
+		uint8_t keybyte = (uint8_t)(random * 255);
+		seed[i] = keybyte;
 	}
-
-	setup_gpu_ctx(cur_ctx,
-				  elems,
-				  num_elems,
-				  message_size,
-				  total_packets,
-				  total_packets_size,
-				  total_signatures,
-				  message_lens,
-				  public_key_offsets,
-				  private_key_offsets,
-				  message_start_offsets,
-				  sig_out_size,
-				  stream);
-
-	LOG("signing blocks: %d threads_per_block: %d\n", num_blocks, num_threads_per_block);
-	ed25519_sign_kernel<<<num_blocks, num_threads_per_block, 0, stream>>>(cur_ctx->packets,
-																		  message_size,
-																		  cur_ctx->public_key_offsets,
-																		  cur_ctx->signature_offsets,
-																		  cur_ctx->message_start_offsets,
-																		  cur_ctx->message_lens,
-																		  total_signatures,
-																		  cur_ctx->out);
-
-	cudaError_t err = cudaMemcpyAsync(signatures_out, cur_ctx->out, sig_out_size, cudaMemcpyDeviceToHost, stream);
-	if (err != cudaSuccess)
-	{
-		fprintf(stderr, "sign: cudaMemcpy(out) error: out = %p cur_ctx->out = %p size = %zu num: %d elems = %p\n",
-				signatures_out, cur_ctx->out, sig_out_size, num_elems, elems);
+	sha512_context md;
+	md.curlen = 0;
+	md.length = 0;
+	md.state[0] = UINT64_C(0x6a09e667f3bcc908);
+	md.state[1] = UINT64_C(0xbb67ae8584caa73b);
+	md.state[2] = UINT64_C(0x3c6ef372fe94f82b);
+	md.state[3] = UINT64_C(0xa54ff53a5f1d36f1);
+	md.state[4] = UINT64_C(0x510e527fade682d1);
+	md.state[5] = UINT64_C(0x9b05688c2b3e6c1f);
+	md.state[6] = UINT64_C(0x1f83d9abfb41bd6b);
+	md.state[7] = UINT64_C(0x5be0cd19137e2179;
+	const unsigned char *in = seed;
+	for (size_t i = 0; i < 32; i++) {
+		md.buf[i + md.curlen] = in[i];
 	}
-	CUDA_CHK(err);
-
-	CUDA_CHK(cudaStreamSynchronize(stream));
-
-	release_gpu_ctx(gpu_ctx);
+	md.curlen += 32;
+	md.length += md.curlen * UINT64_C(8);
+	md.buf[md.curlen++] = (unsigned char)0x80;
+	while (md.curlen < 120) {
+		md.buf[md.curlen++] = (unsigned char)0;
+	}
+	STORE64H(md.length, md.buf+120);
+	uint64_t S[8], W[80], t0, t1;
+	int i;
+	for (i = 0; i < 8; i++) {
+		S[i] = md.state[i];
+	}
+	for (i = 0; i < 16; i++) {
+		LOAD64H(W[i], md.buf + (8 * i));
+	}
+	for (i = 16; i < 80; i++) {
+		W[i] = Gamma1(W[i - 2]) + W[i - 7] + Gamma0(W[i - 15]) + W[i - 16];
+	}
+#define RND(a, b, c, d, e, f, g, h, i)              \
+	t0 = h + Sigma1(e) + Ch(e, f, g) + K[i] + W[i]; \
+	t1 = Sigma0(a) + Maj(a, b, c);                  \
+	d += t0;                                        \
+	h = t0 + t1;
+	for (i = 0; i < 80; i += 8) {
+		RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], i + 0);
+		RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], i + 1);
+		RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], i + 2);
+		RND(S[5], S[6], S[7], S[0], S[1], S[2], S[3], S[4], i + 3);
+		RND(S[4], S[5], S[6], S[7], S[0], S[1], S[2], S[3], i + 4);
+		RND(S[3], S[4], S[5], S[6], S[7], S[0], S[1], S[2], i + 5);
+		RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], i + 6);
+		RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], i + 7);
+	}
+#undef RND
+	for (i = 0; i < 8; i++) {
+		md.state[i] = md.state[i] + S[i];
+	}
+	for (i = 0; i < 8; i++) {
+		STORE64H(md.state[i], privatek + (8 * i));
+	}
+	privatek[0] &= 248;
+	privatek[31] &= 63;
+	privatek[31] |= 64;
+	ge_scalarmult_base(&A, privatek);
+	ge_p3_tobytes(publick, &A);
+	size_t keysize = 256;
+	b58enc(key, &keysize, publick, 32);
+	int key_len = strlen(key);
+	for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+		int prefix_len = prefix_letter_counts[i];
+		bool match = true;
+		for (int j = 0; j < prefix_len; ++j)
+		{
+			if (!(prefixes[i][prefix_len - j - 1] == '?' || prefixes[i][prefix_len - j - 1] == key[key_len - j - 1]))
+			{
+				match = false;
+				break;
+			}
+		}
+		if (match)
+		{
+			atomicAdd(keys_found, 1);
+			int index = atomicAdd(&found_key_count, 1);
+			if (index < MAX_KEYS)
+			{
+				int offset = 0;
+				for (int k = 0; k < 32; k++)
+				{
+					found_keys[index][2 * k] = "0123456789abcdef"[privatek[k] >> 4];
+					found_keys[index][2 * k + 1] = "0123456789abcdef"[privatek[k] & 0x0F];
+				}
+				found_keys[index][64] = ' ';
+				for (int k = 0; k < 32; k++)
+				{
+					found_keys[index][65 + 2 * k] = "0123456789abcdef"[publick[k] >> 4];
+					found_keys[index][65 + 2 * k + 1] = "0123456789abcdef"[publick[k] & 0x0F];
+				}
+				found_keys[index][129] = '\0';
+			}
+		}
+	}
+	for (int i = 0; i < 32; ++i) {
+		if (seed[i] == 255)
+		{
+			seed[i] = 0;
+		}
+		else
+		{
+			seed[i] += 1;
+			break;
+		}
+	}
+	state[id] = localState;
 }
