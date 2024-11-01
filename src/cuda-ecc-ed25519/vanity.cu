@@ -319,6 +319,8 @@ void __global__ vanity_scan(curandState *state)
 		// there of bignunm division done in parallel as a CUDA kernel
 		// so it might make sense to write a new parallel kernel to do
 		// this.
+
+		size_t prefix_length = 2; // Lunghezza del prefisso, ad esempio "ss" è lungo 2
 		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
 		{
 			size_t found = 0;
@@ -333,11 +335,11 @@ void __global__ vanity_scan(curandState *state)
 				else
 					found = 0;
 
-				if (found == 6)
+				if (found == prefix_length) // Cambia "prefix_length" con la lunghezza del prefisso
 					break;
 			}
 
-			if (found > 0)
+			if (found == prefix_length) // Stampa solo se il prefisso completo è trovato
 			{
 				keys_found += 1;
 				size_t pkeysize = 256;
