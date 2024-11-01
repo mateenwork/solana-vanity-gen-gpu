@@ -247,10 +247,7 @@ void __global__ vanity_scan(curandState *state, int key_length)
 
 		if (has_suffix)
 		{
-			keys_found += 1;
-			size_t pkeysize = 256;
-			b58enc(pkey, &pkeysize, seed, 32);
-			printf("(%lu): %s - %s\n", keysize, key, pkey);
+			printf("Key Found: (%lu): %s\n", keysize, key); // Stampa la chiave trovata									// Esci dal ciclo se trovi una corrispondenza
 		}
 	}
 
