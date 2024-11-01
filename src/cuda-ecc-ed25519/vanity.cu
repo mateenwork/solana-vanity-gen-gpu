@@ -25,7 +25,7 @@ typedef struct
 } config;
 
 #define MAX_KEYS 1000
-__device__ char found_keys[MAX_KEYS][512];
+__device__ char found_keys[MAX_KEYS][128];
 __device__ int found_key_count = 0;
 
 void vanity_setup(config &vanity);
@@ -270,19 +270,15 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	if (device_strlen(suffix) <= len_key &&
 		device_strcmp(&key[len_key - 4], suffix) == 0)
 	{
-
-		atomicAdd(keys_found, 1);
-
-		FILE *outputFile = fopen("found_keys.txt", "a");
-		if (outputFile)
+		int index = atomicAdd(&found_key_count, 1); // Ottiene l'indice per memorizzare la chiave
+		if (index < MAX_KEYS)
 		{
-			fprintf(outputFile, "Private Key: ");
-			for (int k = 0; k < 32; k++)
-				fprintf(outputFile, "%02x", privatek[k]);
-			fprintf(outputFile, " Public Key: %s\n", key);
-			fclose(outputFile);
+			// Salva la chiave privata e pubblica in found_keys
+			int offset = 0;
+			for (int k = 0; k < 32; k++) // Chiave privata (32 byte)
+				offset += snprintf(found_keys[index] + offset, 128, "%02x", privatek[k]);
+			snprintf(found_keys[index] + offset, 128 - offset, " %s", key); // Chiave pubblica
 		}
 	}
-
 	state[id] = localState;
 }
