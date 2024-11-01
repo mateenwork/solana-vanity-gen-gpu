@@ -28,6 +28,8 @@ typedef struct
 __device__ char found_keys[MAX_KEYS][128];
 __device__ int found_key_count = 0;
 
+bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
+
 void vanity_setup(config &vanity);
 void vanity_run(config &vanity);
 __device__ const char suffix[] = "pump";
@@ -294,4 +296,60 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		}
 	}
 	state[id] = localState;
+}
+
+bool __device__ b58enc(
+	char *b58,
+	size_t *b58sz,
+	uint8_t *data,
+	size_t binsz)
+{
+	// Base58 Lookup Table
+	const char b58digits_ordered[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+	const uint8_t *bin = data;
+	int carry;
+	size_t i, j, high, zcount = 0;
+	size_t size;
+
+	while (zcount < binsz && !bin[zcount])
+		++zcount;
+
+	size = (binsz - zcount) * 138 / 100 + 1;
+	uint8_t buf[256];
+	memset(buf, 0, size);
+
+	for (i = zcount, high = size - 1; i < binsz; ++i, high = j)
+	{
+		for (carry = bin[i], j = size - 1; (j > high) || carry; --j)
+		{
+			carry += 256 * buf[j];
+			buf[j] = carry % 58;
+			carry /= 58;
+			if (!j)
+			{
+				// Otherwise j wraps to maxint which is > high
+				break;
+			}
+		}
+	}
+
+	for (j = 0; j < size && !buf[j]; ++j)
+		;
+
+	if (*b58sz <= zcount + size - j)
+	{
+		*b58sz = zcount + size - j + 1;
+		return false;
+	}
+
+	if (zcount)
+		memset(b58, '1', zcount);
+	for (i = zcount; j < size; ++i, ++j)
+		b58[i] = b58digits_ordered[buf[j]];
+
+	b58[i] = '\0';
+	*b58sz = i + 1;
+
+	return true;
 }
