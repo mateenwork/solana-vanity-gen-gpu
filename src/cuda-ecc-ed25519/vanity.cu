@@ -31,6 +31,11 @@ typedef struct
 	curandState *states[8];
 } config;
 
+__constant__ char prefixes[][5] = {"pump"};
+
+// Calcola il numero massimo di pattern
+#define MAX_PATTERNS (sizeof(prefixes) / sizeof(prefixes[0]))
+
 /* -- Prototypes, Because C++ ----------------------------------------------- */
 
 void vanity_setup(config &vanity);
@@ -245,16 +250,13 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 
 	// SMITH - should really be passed in, but hey ho
 	int prefix_letter_counts[MAX_PATTERNS];
-	for (unsigned int n = 0; n < sizeof(prefixes) / sizeof(prefixes[0]); ++n)
+	for (int n = 0; n < MAX_PATTERNS; ++n)
 	{
-		if (MAX_PATTERNS == n)
-		{
-			printf("NEVER SPEAK TO ME OR MY SON AGAIN");
-			return;
-		}
 		int letter_count = 0;
-		for (; prefixes[n][letter_count] != 0; letter_count++)
-			;
+		while (prefixes[n][letter_count] != '\0')
+		{
+			letter_count++;
+		}
 		prefix_letter_counts[n] = letter_count;
 	}
 
@@ -421,82 +423,68 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 
-		// Controllo se le ultime 4 lettere di `key` corrispondono a "pump"
-		if (key[strlen(key) - 4] == 'p' &&
-			key[strlen(key) - 3] == 'u' &&
-			key[strlen(key) - 2] == 'm' &&
-			key[strlen(key) - 1] == 'p')
+		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
 		{
-			atomicAdd(keys_found, 1);
-			printf("GPU %d MATCH %s - ", *gpu, key);
-			for (int n = 0; n < sizeof(seed); n++)
+			int suffix_length = prefix_letter_counts[i];
+			int start_pos = keysize - suffix_length;
+			if (start_pos >= 0)
 			{
-				printf("%02x", (unsigned char)seed[n]);
-			}
-			printf("\n");
-
-			printf("\n");
-
-			printf("[");
-			for (int n = 0; n < sizeof(seed); n++)
-			{
-				printf("%d,", (unsigned char)seed[n]);
-			}
-			for (int n = 0; n < sizeof(publick); n++)
-			{
-				if (n + 1 == sizeof(publick))
+				for (int j = 0; j < suffix_length; ++j)
 				{
-					printf("%d", publick[n]);
-				}
-				else
-				{
-					printf("%d,", publick[n]);
+					if (!(prefixes[i][j] == '?') && !(prefixes[i][j] == key[start_pos + j]))
+					{
+						break;
+					}
+					if (j == (suffix_length - 1))
+					{
+						// Match found
+						atomicAdd(keys_found, 1);
+						printf("GPU %d MATCH %s - ", *gpu, key);
+						for (int n = 0; n < sizeof(seed); n++)
+						{
+							printf("%02x", (unsigned char)seed[n]);
+						}
+						printf("\n[");
+						for (int n = 0; n < sizeof(seed); n++)
+						{
+							printf("%d,", (unsigned char)seed[n]);
+						}
+						for (int n = 0; n < sizeof(publick); n++)
+						{
+							printf("%d%s", publick[n], (n + 1 == sizeof(publick)) ? "" : ",");
+						}
+						printf("]\n");
+						break;
+					}
 				}
 			}
-			printf("]\n");
+		}
 
-			/*
-			printf("Public: ");
-								for(int n=0; n<sizeof(publick); n++) { printf("%d ",publick[n]); }
-			printf("\n");
-			printf("Private: ");
-								for(int n=0; n<sizeof(privatek); n++) { printf("%d ",privatek[n]); }
-			printf("\n");
-			printf("Seed: ");
-								for(int n=0; n<sizeof(seed); n++) { printf("%d ",seed[n]); }
-			printf("\n");
-								*/
+		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
 
-			break;
+		// Increment Seed.
+		// NOTE: This is horrifically insecure. Please don't use these
+		// keys on live. This increment is just so we don't have to
+		// invoke the CUDA random number generator for each hash to
+		// boost performance a little. Easy key generation, awful
+		// security.
+		for (int i = 0; i < 32; ++i)
+		{
+			if (seed[i] == 255)
+			{
+				seed[i] = 0;
+			}
+			else
+			{
+				seed[i] += 1;
+				break;
+			}
 		}
 	}
-}
 
-// Code Until here runs at 22_000_000H/s. So the above is fast enough.
-
-// Increment Seed.
-// NOTE: This is horrifically insecure. Please don't use these
-// keys on live. This increment is just so we don't have to
-// invoke the CUDA random number generator for each hash to
-// boost performance a little. Easy key generation, awful
-// security.
-for (int i = 0; i < 32; ++i)
-{
-	if (seed[i] == 255)
-	{
-		seed[i] = 0;
-	}
-	else
-	{
-		seed[i] += 1;
-		break;
-	}
-}
-}
-
-// Copy Random State so that future calls of this kernel/thread/block
-// don't repeat their sequences.
-state[id] = localState;
+	// Copy Random State so that future calls of this kernel/thread/block
+	// don't repeat their sequences.
+	state[id] = localState;
 }
 
 bool __device__ b58enc(
