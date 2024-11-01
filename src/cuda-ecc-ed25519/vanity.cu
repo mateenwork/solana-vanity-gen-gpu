@@ -1,323 +1,144 @@
-#include <vector>
-#include <random>
-#include <chrono>
+#include <vector> // Libreria per gestire vettori dinamici
+#include <random> // Libreria per la generazione di numeri casuali
+#include <chrono> // Libreria per la misurazione del tempo di esecuzione
 
-#include <iostream>
-#include <ctime>
+#include <assert.h>	  // Libreria per le asserzioni e il controllo degli errori
+#include <inttypes.h> // Libreria per definire tipi di interi con dimensioni specifiche
+#include <pthread.h>  // Libreria per la gestione dei thread
+#include <stdio.h>	  // Libreria per funzioni di input/output
 
-#include <assert.h>
-#include <inttypes.h>
-#include <pthread.h>
-#include <stdio.h>
+#include "curand_kernel.h" // Libreria CUDA per la generazione di numeri casuali sui dispositivi GPU
+#include "ed25519.h"	   // Libreria per la crittografia basata su curve ellittiche Ed25519
+#include "fixedint.h"	   // Libreria per gestire interi di dimensioni fisse
+#include "gpu_common.h"	   // Libreria di funzioni comuni per il supporto GPU
+#include "gpu_ctx.h"	   // Libreria per la gestione del contesto GPU
 
-#include "curand_kernel.h"
-#include "ed25519.h"
-#include "fixedint.h"
-#include "gpu_common.h"
-#include "gpu_ctx.h"
+#include "keypair.cu"  // File di implementazione per la generazione di coppie di chiavi
+#include "sc.cu"	   // File di implementazione per operazioni scalari
+#include "fe.cu"	   // File di implementazione per operazioni di campo
+#include "ge.cu"	   // File di implementazione per operazioni geometriche
+#include "sha512.cu"   // File di implementazione per il hashing SHA512
+#include "../config.h" // File di configurazione per l'applicazione
 
-#include "keypair.cu"
-#include "sc.cu"
-#include "fe.cu"
-#include "ge.cu"
-#include "sha512.cu"
-#include "../config.h"
-
-/* -- Types ----------------------------------------------------------------- */
+/* -- Tipi ------------------------------------------------------------------- */
 
 typedef struct
 {
-	// CUDA Random States.
-	curandState *states[8];
+	curandState *states[8]; // Array di stati casuali per CUDA, uno per ogni GPU
 } config;
 
-/* -- Prototypes, Because C++ ----------------------------------------------- */
+/* -- Prototipi delle Funzioni ------------------------------------------------*/
 
-void vanity_setup(config &vanity);
-void vanity_run(config &vanity);
-void __global__ vanity_init(unsigned long long int *seed, curandState *state);
-void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *execution_count);
-bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
+void vanity_setup(config &vanity);											   // Funzione per inizializzare la configurazione GPU
+void vanity_run(config &vanity);											   // Funzione per avviare il processo di generazione vanity
+void __global__ vanity_init(curandState *state);							   // Kernel CUDA per inizializzare gli stati casuali
+void __global__ vanity_scan(curandState *state);							   // Kernel CUDA per generare chiavi vanity
+bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz); // Funzione per l’encoding in Base58
 
-/* -- Entry Point ----------------------------------------------------------- */
+/* -- Punto di Ingresso Principale ------------------------------------------- */
 
 int main(int argc, char const *argv[])
 {
-	ed25519_set_verbose(true);
+	ed25519_set_verbose(true); // Attiva la modalità di output verbose
 
-	config vanity;
-	vanity_setup(vanity);
-	vanity_run(vanity);
+	config vanity;		  // Struttura per la configurazione del generatore vanity
+	vanity_setup(vanity); // Inizializza la configurazione della GPU
+	vanity_run(vanity);	  // Avvia il processo di generazione vanity
 }
 
-// SMITH
-std::string getTimeStr()
-{
-	std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-	std::string s(30, '\0');
-	std::strftime(&s[0], s.size(), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
-	return s;
-}
-
-// SMITH - safe? who knows
-unsigned long long int makeSeed()
-{
-	unsigned long long int seed = 0;
-	char *pseed = (char *)&seed;
-
-	std::random_device rd;
-
-	for (unsigned int b = 0; b < sizeof(seed); b++)
-	{
-		auto r = rd();
-		char *entropy = (char *)&r;
-		pseed[b] = entropy[0];
-	}
-
-	return seed;
-}
-
-/* -- Vanity Step Functions ------------------------------------------------- */
+/* -- Funzioni per la Configurazione GPU ------------------------------------- */
 
 void vanity_setup(config &vanity)
 {
-	printf("GPU: Initializing Memory\n");
-	int gpuCount = 0;
-	cudaGetDeviceCount(&gpuCount);
+	printf("GPU: Inizializzazione della memoria\n"); // Messaggio per l’inizio dell’inizializzazione GPU
+	int gpuCount = 0;								 // Variabile per memorizzare il numero di GPU
+	cudaGetDeviceCount(&gpuCount);					 // Ottiene il numero di dispositivi GPU disponibili
 
-	// Create random states so kernels have access to random generators
-	// while running in the GPU.
-	for (int i = 0; i < gpuCount; ++i)
+	for (int i = 0; i < gpuCount; ++i) // Itera su ciascuna GPU
 	{
-		cudaSetDevice(i);
+		cudaSetDevice(i); // Seleziona la GPU corrente
 
-		// Fetch Device Properties
-		cudaDeviceProp device;
-		cudaGetDeviceProperties(&device, i);
+		cudaDeviceProp device;				 // Struttura per le proprietà del dispositivo
+		cudaGetDeviceProperties(&device, i); // Ottiene le proprietà della GPU corrente
 
-		// Calculate Occupancy
-		int blockSize = 0,
-			minGridSize = 0,
-			maxActiveBlocks = 0;
-		cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
-		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
+		int blockSize = 0, minGridSize = 0, maxActiveBlocks = 0;									// Variabili per calcolare l’occupazione
+		cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);			// Calcola block size ottimale
+		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0); // Calcola max block attivi
 
-		// Output Device Details
-		//
-		// Our kernels currently don't take advantage of data locality
-		// or how warp execution works, so each thread can be thought
-		// of as a totally independent thread of execution (bad). On
-		// the bright side, this means we can really easily calculate
-		// maximum occupancy for a GPU because we don't have to care
-		// about building blocks well. Essentially we're trading away
-		// GPU SIMD ability for standard parallelism, which CPUs are
-		// better at and GPUs suck at.
-		//
-		// Next Weekend Project: ^ Fix this.
-		printf("GPU: %d (%s <%d, %d, %d>) -- W: %d, P: %d, TPB: %d, MTD: (%dx, %dy, %dz), MGS: (%dx, %dy, %dz)\n",
-			   i,
-			   device.name,
-			   blockSize,
-			   minGridSize,
-			   maxActiveBlocks,
-			   device.warpSize,
-			   device.multiProcessorCount,
-			   device.maxThreadsPerBlock,
-			   device.maxThreadsDim[0],
-			   device.maxThreadsDim[1],
-			   device.maxThreadsDim[2],
-			   device.maxGridSize[0],
-			   device.maxGridSize[1],
-			   device.maxGridSize[2]);
+		printf("GPU: (%s <%d, %d, %d>) -- W: %d, P: %d, TPB: %d, MTD: (%dx, %dy, %dz), MGS: (%dx, %dy, %dz)\n",
+			   device.name, blockSize, minGridSize, maxActiveBlocks, device.warpSize,
+			   device.multiProcessorCount, device.maxThreadsPerBlock, device.maxThreadsDim[0],
+			   device.maxThreadsDim[1], device.maxThreadsDim[2], device.maxGridSize[0],
+			   device.maxGridSize[1], device.maxGridSize[2]); // Stampa le proprietà della GPU
 
-		// the random number seed is uniquely generated each time the program
-		// is run, from the operating system entropy
-
-		unsigned long long int rseed = makeSeed();
-		printf("Initialising from entropy: %llu\n", rseed);
-
-		unsigned long long int *dev_rseed;
-		cudaMalloc((void **)&dev_rseed, sizeof(unsigned long long int));
-		cudaMemcpy(dev_rseed, &rseed, sizeof(unsigned long long int), cudaMemcpyHostToDevice);
-
-		cudaMalloc((void **)&(vanity.states[i]), maxActiveBlocks * blockSize * sizeof(curandState));
-		vanity_init<<<maxActiveBlocks, blockSize>>>(dev_rseed, vanity.states[i]);
+		cudaMalloc((void **)&(vanity.states[i]), maxActiveBlocks * blockSize * sizeof(curandState)); // Alloca memoria per stati casuali
+		vanity_init<<<maxActiveBlocks, blockSize>>>(vanity.states[i]);								 // Avvia il kernel per inizializzare gli stati casuali
 	}
 
-	printf("END: Initializing Memory\n");
+	printf("Fine: Inizializzazione della memoria\n"); // Messaggio di fine inizializzazione
 }
 
 void vanity_run(config &vanity)
 {
-	int gpuCount = 0;
-	cudaGetDeviceCount(&gpuCount);
+	int gpuCount = 0;			   // Variabile per memorizzare il numero di GPU
+	cudaGetDeviceCount(&gpuCount); // Ottiene il numero di GPU disponibili
 
-	unsigned long long int executions_total = 0;
-	unsigned long long int executions_this_iteration;
-	int executions_this_gpu;
-	int *dev_executions_this_gpu[100];
-
-	int keys_found_total = 0;
-	int keys_found_this_iteration;
-	int *dev_keys_found[100]; // not more than 100 GPUs ok!
-
-	int keys_found_total = 0;
-	int keys_found_this_iteration;
-	int *dev_keys_found[100]; // not more than 100 GPUs ok!
-
-// Definisci la struttura per salvare le chiavi
-#define MAX_KEYS 1000				// Limite per il numero di chiavi da salvare
-	char saved_keys[MAX_KEYS][256]; // Array per salvare le chiavi
-	int key_index = 0;				// Indice per la chiave salvata
-
-	for (int i = 0; i < MAX_ITERATIONS; ++i)
+	for (int i = 0; i < 1024; ++i) // Loop per tentativi di generazione
 	{
-		auto start = std::chrono::high_resolution_clock::now();
+		auto start = std::chrono::high_resolution_clock::now(); // Inizio misurazione tempo
 
-		executions_this_iteration = 0;
-
-		// Run on all GPUs
-		for (int g = 0; g < gpuCount; ++g)
+		for (int i = 0; i < gpuCount; ++i) // Esegue il kernel su tutte le GPU
 		{
-			cudaSetDevice(g);
-			// Calculate Occupancy
-			int blockSize = 0,
-				minGridSize = 0,
-				maxActiveBlocks = 0;
-			cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
-			cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
-
-			int *dev_g;
-			cudaMalloc((void **)&dev_g, sizeof(int));
-			cudaMemcpy(dev_g, &g, sizeof(int), cudaMemcpyHostToDevice);
-
-			cudaMalloc((void **)&dev_keys_found[g], sizeof(int));
-			cudaMalloc((void **)&dev_executions_this_gpu[g], sizeof(int));
-
-			vanity_scan<<<maxActiveBlocks, blockSize>>>(vanity.states[g], dev_keys_found[g], dev_g, dev_executions_this_gpu[g]);
+			cudaSetDevice(i);																			// Seleziona la GPU corrente
+			int blockSize = 0, minGridSize = 0, maxActiveBlocks = 0;									// Variabili per calcolare l'occupazione
+			cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);			// Calcola la block size ottimale
+			cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0); // Calcola max blocchi attivi
+			vanity_scan<<<maxActiveBlocks, blockSize>>>(vanity.states[i]);								// Esegue il kernel per generare chiavi vanity
 		}
 
-		// Synchronize while we wait for kernels to complete. I do not
-		// actually know if this will sync against all GPUs, it might
-		// just sync with the last `i`, but they should all complete
-		// roughly at the same time and worst case it will just stack
-		// up kernels in the queue to run.
-		cudaDeviceSynchronize();
-		auto finish = std::chrono::high_resolution_clock::now();
+		cudaDeviceSynchronize();								 // Sincronizza tutte le GPU per attendere la fine dei kernel
+		auto finish = std::chrono::high_resolution_clock::now(); // Fine misurazione tempo
 
-		for (int g = 0; g < gpuCount; ++g)
-		{
-			cudaMemcpy(&keys_found_this_iteration, dev_keys_found[g], sizeof(int), cudaMemcpyDeviceToHost);
-			keys_found_total += keys_found_this_iteration;
-			// printf("GPU %d found %d keys\n",g,keys_found_this_iteration);
-
-			cudaMemcpy(&executions_this_gpu, dev_executions_this_gpu[g], sizeof(int), cudaMemcpyDeviceToHost);
-			executions_this_iteration += executions_this_gpu * ATTEMPTS_PER_EXECUTION;
-			executions_total += executions_this_gpu * ATTEMPTS_PER_EXECUTION;
-			// printf("GPU %d executions: %d\n",g,executions_this_gpu);
-		}
-
-		// Print out performance Summary
-		std::chrono::duration<double> elapsed = finish - start;
-		printf("%s Iteration %d Attempts: %llu in %f at %fcps - Total Attempts %llu - keys found %d\n",
-			   getTimeStr().c_str(),
-			   i + 1,
-			   executions_this_iteration, //(8 * 8 * 256 * 100000),
-			   elapsed.count(),
-			   executions_this_iteration / elapsed.count(),
-			   executions_total,
-			   keys_found_total);
-
-		// Codice per scrivere le chiavi trovate nel file
-		if (i == MAX_ITERATIONS - 1)
-		{ // Scrivi solo alla fine dell'ultima iterazione
-			FILE *file = fopen("found_keys.txt", "w");
-			if (file != NULL)
-			{
-				for (int j = 0; j < key_index; j++)
-				{
-					fprintf(file, "%s\n", saved_keys[j]);
-				}
-				fclose(file);
-			}
-			else
-			{
-				printf("Errore nell'aprire il file per la scrittura.\n");
-			}
-		}
-
-		if (keys_found_total >= STOP_AFTER_KEYS_FOUND)
-		{
-			printf("Enough keys found, Done! \n");
-			exit(0);
-		}
+		std::chrono::duration<double> elapsed = finish - start; // Calcola il tempo trascorso
+		printf("Tentativi: %d in %f s a %fcps\n",				// Stampa il resoconto delle prestazioni
+			   (8 * 8 * 256 * 100000), elapsed.count(),
+			   (8 * 8 * 256 * 100000) / elapsed.count());
 	}
-
-	printf("Iterations complete, Done!\n");
 }
 
-/* -- CUDA Vanity Functions ------------------------------------------------- */
+/* -- Kernel CUDA per Inizializzare Stati Casuali ---------------------------- */
 
-void __global__ vanity_init(unsigned long long int *rseed, curandState *state)
+void __global__ vanity_init(curandState *state)
 {
-	int id = threadIdx.x + (blockIdx.x * blockDim.x);
-	curand_init(*rseed + id, id, 0, &state[id]);
+	int id = threadIdx.x + (blockIdx.x * blockDim.x); // Calcola l'ID del thread corrente
+	curand_init(580000 + id, id, 0, &state[id]);	  // Inizializza lo stato casuale del thread
 }
 
-void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *exec_count)
+/* -- Kernel CUDA per la Scansione Vanity ------------------------------------ */
+
+void __global__ vanity_scan(curandState *state)
 {
-	int id = threadIdx.x + (blockIdx.x * blockDim.x);
+	int id = threadIdx.x + (blockIdx.x * blockDim.x); // Calcola l'ID del thread
 
-	atomicAdd(exec_count, 1);
+	ge_p3 A;							// Struttura per l'operazione di curva ellittica
+	curandState localState = state[id]; // Copia lo stato casuale per evitare modifiche simultanee
+	unsigned char seed[32] = {0};		// Buffer per il seed casuale
+	unsigned char publick[32] = {0};	// Buffer per la chiave pubblica generata
+	unsigned char privatek[64] = {0};	// Buffer per la chiave privata generata
+	char key[256] = {0};				// Buffer per la chiave vanity generata in Base58
+	char pkey[256] = {0};				// Buffer per l'output finale della chiave
 
-	// SMITH - should really be passed in, but hey ho
-	int prefix_letter_counts[MAX_PATTERNS];
-	for (unsigned int n = 0; n < sizeof(prefixes) / sizeof(prefixes[0]); ++n)
+	for (int i = 0; i < 32; ++i) // Genera un seed casuale
 	{
-		if (MAX_PATTERNS == n)
-		{
-			printf("NEVER SPEAK TO ME OR MY SON AGAIN");
-			return;
-		}
-		int letter_count = 0;
-		for (; prefixes[n][letter_count] != 0; letter_count++)
-			;
-		prefix_letter_counts[n] = letter_count;
+		float random = curand_uniform(&localState); // Numero casuale tra 0 e 1
+		uint8_t keybyte = (uint8_t)(random * 255);	// Converte in byte tra 0 e 255
+		seed[i] = keybyte;							// Assegna il byte al seed
 	}
 
-	// Local Kernel State
-	ge_p3 A;
-	curandState localState = state[id];
-	unsigned char seed[32] = {0};
-	unsigned char publick[32] = {0};
-	unsigned char privatek[64] = {0};
-	char key[256] = {0};
-	// char pkey[256]             = {0};
+	size_t keys_found = 0; // Contatore per le chiavi trovate
+	sha512_context md;	   // Struttura di contesto per SHA512
 
-	// Start from an Initial Random Seed (Slow)
-	// NOTE: Insecure random number generator, do not use keys generator by
-	// this program in live.
-	// SMITH: localState should be entropy random now
-	for (int i = 0; i < 32; ++i)
-	{
-		float random = curand_uniform(&localState);
-		uint8_t keybyte = (uint8_t)(random * 255);
-		seed[i] = keybyte;
-	}
-
-	// Generate Random Key Data
-	sha512_context md;
-
-	// I've unrolled all the MD5 calls and special cased them to 32 byte
-	// inputs, which eliminates a lot of branching. This is a pretty poor
-	// way to optimize GPU code though.
-	//
-	// A better approach would be to split this application into two
-	// different kernels, one that is warp-efficient for SHA512 generation,
-	// and another that is warp efficient for bignum division to more
-	// efficiently scan for prefixes. Right now bs58enc cuts performance
-	// from 16M keys on my machine per second to 4M.
-	for (int attempts = 0; attempts < ATTEMPTS_PER_EXECUTION; ++attempts)
+	for (int attempts = 0; attempts < 100000; ++attempts)
 	{
 		// sha512_init Inlined
 		md.curlen = 0;
@@ -331,17 +152,6 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		md.state[6] = UINT64_C(0x1f83d9abfb41bd6b);
 		md.state[7] = UINT64_C(0x5be0cd19137e2179);
 
-		// sha512_update inlined
-		//
-		// All `if` statements from this function are eliminated if we
-		// will only ever hash a 32 byte seed input. So inlining this
-		// has a drastic speed improvement on GPUs.
-		//
-		// This means:
-		//   * Normally we iterate for each 128 bytes of input, but we are always < 128. So no iteration.
-		//   * We can eliminate a MIN(inlen, (128 - md.curlen)) comparison, specialize to 32, branch prediction improvement.
-		//   * We can eliminate the in/inlen tracking as we will never subtract while under 128
-		//   * As a result, the only thing update does is copy the bytes into the buffer.
 		const unsigned char *in = seed;
 		for (size_t i = 0; i < 32; i++)
 		{
@@ -349,15 +159,6 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		}
 		md.curlen += 32;
 
-		// sha512_final inlined
-		//
-		// As update was effectively elimiated, the only time we do
-		// sha512_compress now is in the finalize function. We can also
-		// optimize this:
-		//
-		// This means:
-		//   * We don't need to care about the curlen > 112 check. Eliminating a branch.
-		//   * We only need to run one round of sha512_compress, so we can inline it entirely as we don't need to unroll.
 		md.length += md.curlen * UINT64_C(8);
 		md.buf[md.curlen++] = (unsigned char)0x80;
 
@@ -434,84 +235,36 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		ge_scalarmult_base(&A, privatek);
 		ge_p3_tobytes(publick, &A);
 
-		// Code Until here runs at 87_000_000H/s still!
-
 		size_t keysize = 256;
 		b58enc(key, &keysize, publick, 32);
 
-		// Code Until here runs at 22_000_000H/s. b58enc badly needs optimization.
-
-		// We don't have access to strncmp/strlen here, I don't know
-		// what the efficient way of doing this on a GPU is, so I'll
-		// start with a dumb loop. There seem to be implementations out
-		// there of bignunm division done in parallel as a CUDA kernel
-		// so it might make sense to write a new parallel kernel to do
-		// this.
-
 		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
 		{
-			// Verifica se la chiave finisce con il suffisso specificato
-			int suffix_length = prefix_letter_counts[i];
-
-			// Controlla se la chiave è abbastanza lunga per il suffisso
-			if (suffix_length > 256)
-				continue; // Assicurati che la chiave sia lunga abbastanza
-
-			bool match = true;
-			for (int j = 0; j < suffix_length; ++j)
+			size_t found = 0;
+			for (int j = 0; prefixes[i][j] != 0; ++j)
 			{
-				// Controlla i caratteri dalla fine della chiave
-				if (!(prefixes[i][suffix_length - 1 - j] == '?') &&
-					!(prefixes[i][suffix_length - 1 - j] == key[255 - j]))
-				{
-					match = false;
+				char lowered = (key[j] >= 65 && key[j] <= 90)
+								   ? key[j] + 32
+								   : key[j];
+
+				if (prefixes[i][found] == '?' || prefixes[i][found] == lowered)
+					found++;
+				else
+					found = 0;
+
+				if (found == 6)
 					break;
-				}
 			}
 
-			// Se abbiamo trovato una corrispondenza con il suffisso
-			if (match)
+			if (found == 6)
 			{
-				atomicAdd(keys_found, 1);
-
-				// Stampa la chiave trovata
-				printf("GPU %d MATCH %s - ", *gpu, key);
-				for (int n = 0; n < sizeof(seed); n++)
-				{
-					printf("%02x", (unsigned char)seed[n]);
-				}
-				printf("\n");
-
-				printf("[");
-				for (int n = 0; n < sizeof(seed); n++)
-				{
-					printf("%d,", (unsigned char)seed[n]);
-				}
-				for (int n = 0; n < sizeof(publick); n++)
-				{
-					if (n + 1 == sizeof(publick))
-					{
-						printf("%d", publick[n]);
-					}
-					else
-					{
-						printf("%d,", publick[n]);
-					}
-				}
-				printf("]\n");
-
-				break; // Esci se trovi un suffisso
+				keys_found += 1;
+				size_t pkeysize = 256;
+				b58enc(pkey, &pkeysize, seed, 32);
+				printf("(%d): %s - %s\n", keysize, key, pkey);
 			}
 		}
 
-		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
-
-		// Increment Seed.
-		// NOTE: This is horrifically insecure. Please don't use these
-		// keys on live. This increment is just so we don't have to
-		// invoke the CUDA random number generator for each hash to
-		// boost performance a little. Easy key generation, awful
-		// security.
 		for (int i = 0; i < 32; ++i)
 		{
 			if (seed[i] == 255)
@@ -526,10 +279,10 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		}
 	}
 
-	// Copy Random State so that future calls of this kernel/thread/block
-	// don't repeat their sequences.
-	state[id] = localState;
+	state[id] = localState; // Salva lo stato aggiornato
 }
+
+/* -- Funzione per Encoding in Base58 ---------------------------------------- */
 
 bool __device__ b58enc(
 	char *b58,
@@ -537,22 +290,21 @@ bool __device__ b58enc(
 	uint8_t *data,
 	size_t binsz)
 {
-	// Base58 Lookup Table
-	const char b58digits_ordered[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+	const char b58digits_ordered[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; // Tabella Base58
+	const uint8_t *bin = data;																	   // Puntatore ai dati binari
 
-	const uint8_t *bin = data;
 	int carry;
 	size_t i, j, high, zcount = 0;
 	size_t size;
 
-	while (zcount < binsz && !bin[zcount])
+	while (zcount < binsz && !bin[zcount]) // Conta i byte iniziali zero
 		++zcount;
 
-	size = (binsz - zcount) * 138 / 100 + 1;
+	size = (binsz - zcount) * 138 / 100 + 1; // Calcola la lunghezza necessaria per Base58
 	uint8_t buf[256];
-	memset(buf, 0, size);
+	memset(buf, 0, size); // Inizializza il buffer a zero
 
-	for (i = zcount, high = size - 1; i < binsz; ++i, high = j)
+	for (i = zcount, high = size - 1; i < binsz; ++i, high = j) // Esegui la divisione binaria
 	{
 		for (carry = bin[i], j = size - 1; (j > high) || carry; --j)
 		{
@@ -560,13 +312,9 @@ bool __device__ b58enc(
 			buf[j] = carry % 58;
 			carry /= 58;
 			if (!j)
-			{
-				// Otherwise j wraps to maxint which is > high
-				break;
-			}
+				break; // Fermati quando il buffer è vuoto
 		}
 	}
-
 	for (j = 0; j < size && !buf[j]; ++j)
 		;
 
