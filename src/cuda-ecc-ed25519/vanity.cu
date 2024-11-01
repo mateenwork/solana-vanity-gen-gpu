@@ -281,8 +281,11 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	int len_key = device_strlen(key);
 	if (device_strlen(suffix) <= len_key &&
 		device_strcmp(&key[len_key - 4], suffix) == 0)
+
 	{
-		int index = atomicAdd(&found_key_count, 1); // Ottiene l'indice per memorizzare la chiave
+		printf("Generated key: %s\n", key);						   // Stampa la chiave generata
+		printf("Checking suffix for key %s\n", &key[len_key - 4]); // Stampa i 4 caratteri finali
+		int index = atomicAdd(&found_key_count, 1);				   // Ottiene l'indice per memorizzare la chiave
 		if (index < MAX_KEYS)
 		{
 			// Converte la chiave privata in esadecimale e salva la chiave pubblica
