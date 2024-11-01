@@ -24,6 +24,22 @@ typedef struct
 	curandState *states[8];
 } config;
 
+__device__ bool
+contains_substring(const char *str, const char *substr)
+{
+	int str_len = device_strlen(str);
+	int substr_len = device_strlen(substr);
+
+	for (int i = 0; i <= str_len - substr_len; ++i)
+	{
+		if (device_strcmp(&str[i], substr) == 0)
+		{
+			return true; // Trovato
+		}
+	}
+	return false; // Non trovato
+}
+
 #define MAX_KEYS 1000
 __device__ char found_keys[MAX_KEYS][128];
 __device__ int found_key_count = 0;
@@ -283,9 +299,10 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 
 	// Debug: Stampa la chiave e la sua lunghezza
 	// Controllo se la chiave contiene "pump" come suffisso
-	if (suffix_len <= len_key && device_strcmp(&key[len_key - suffix_len], suffix) == 0)
+	// Dentro il tuo codice nel kernel:
+	if (contains_substring(key, suffix))
 	{
-		printf("Generated key with 'pump' suffix: %s (length: %d)\n", key, len_key);
+		printf("Generated key containing 'pump': %s (length: %d)\n", key, len_key);
 	}
 	// printf("Suffix to match: %s (length: %d)\n", suffix, suffix_len);
 
