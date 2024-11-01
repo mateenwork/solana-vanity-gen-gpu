@@ -22,7 +22,7 @@
 #include "../config.h"
 
 /* -- Configurazione suffisso da trovare -- */
-const char suffixes[][4] = {"pump"}; // Definisci qui i suffissi desiderati
+const char suffixes[][5] = {"pump"}; // Definisci qui i suffissi desiderati
 
 typedef struct
 {
