@@ -416,18 +416,23 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		int len = 0;
 		while (key[len] != '\0' && len < 256)
 			len++;
-
 		// Continua con il normale controllo del suffisso
 		if (len >= 4 && key[len - 4] == 'p' && key[len - 3] == 'u' && key[len - 2] == 'm' && key[len - 1] == 'p')
 		{
 			atomicAdd(keys_found, 1);
 
-			// Stampa la chiave privata come array di 64 byte
+			// Copia i 32 byte della chiave pubblica negli ultimi 32 byte di privatek
+			for (int i = 0; i < 32; i++)
+			{
+				privatek[32 + i] = publick[i];
+			}
+
+			// Stampa `privatek` come array JSON da 64 byte per il file keypair.json
 			printf("[");
 			for (int n = 0; n < 64; n++)
 			{
 				printf("%d", (unsigned char)privatek[n]);
-				if (n < 63) // Inserisci la virgola fino all'ultimo elemento
+				if (n < 63)
 				{
 					printf(",");
 				}
