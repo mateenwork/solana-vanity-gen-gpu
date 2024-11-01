@@ -320,9 +320,9 @@ void __global__ vanity_scan(curandState *state)
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 		// Lunghezza del suffisso da cercare
-		int suffix_len = 4; // per "pump"
+		int suffix_len = 4; // Lunghezza del suffisso "pump"
 
-		// Verifica se gli ultimi caratteri di `key` corrispondono a "pump"
+		// Controlla se gli ultimi caratteri di `key` corrispondono a "pump"
 		if (strncmp(&key[keysize - suffix_len], "pump", suffix_len) == 0)
 		{
 			atomicAdd(keys_found, 1);
