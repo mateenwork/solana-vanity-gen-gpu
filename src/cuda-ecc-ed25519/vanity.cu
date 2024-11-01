@@ -30,6 +30,8 @@ __device__ int found_key_count = 0;
 
 void vanity_setup(config &vanity);
 void vanity_run(config &vanity);
+__device__ const char suffix[] = "pump";
+
 void __global__ vanity_init(unsigned long long int *seed, curandState *state);
 void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *execution_count);
 bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
@@ -160,18 +162,19 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 {
 	int id = threadIdx.x + (blockIdx.x * blockDim.x);
 	atomicAdd(exec_count, 1);
+
 	ge_p3 A;
 	curandState localState = state[id];
 	unsigned char seed[32] = {0};
 	unsigned char publick[32] = {0};
 	unsigned char privatek[64] = {0};
 	char key[256] = {0};
+
 	for (int i = 0; i < 32; ++i)
 	{
-		float random = curand_uniform(&localState);
-		uint8_t keybyte = (uint8_t)(random * 255);
-		seed[i] = keybyte;
+		seed[i] = (uint8_t)(curand_uniform(&localState) * 255);
 	}
+
 	sha512_context md;
 	md.curlen = 0;
 	md.length = 0;
@@ -183,39 +186,32 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	md.state[5] = UINT64_C(0x9b05688c2b3e6c1f);
 	md.state[6] = UINT64_C(0x1f83d9abfb41bd6b);
 	md.state[7] = UINT64_C(0x5be0cd19137e2179);
-	const unsigned char *in = seed;
-	for (size_t i = 0; i < 32; i++)
+
+	for (int i = 0; i < 32; i++)
 	{
-		md.buf[i + md.curlen] = in[i];
+		md.buf[i] = seed[i];
 	}
 	md.curlen += 32;
-	md.length += md.curlen * UINT64_C(8);
-	md.buf[md.curlen++] = (unsigned char)0x80;
+
+	md.length += md.curlen * 8;
+	md.buf[md.curlen++] = 0x80;
 	while (md.curlen < 120)
 	{
-		md.buf[md.curlen++] = (unsigned char)0;
+		md.buf[md.curlen++] = 0;
 	}
 	STORE64H(md.length, md.buf + 120);
+
 	uint64_t S[8], W[80], t0, t1;
-	int i;
-	for (i = 0; i < 8; i++)
-	{
+	for (int i = 0; i < 8; i++)
 		S[i] = md.state[i];
-	}
-	for (i = 0; i < 16; i++)
-	{
+	for (int i = 0; i < 16; i++)
 		LOAD64H(W[i], md.buf + (8 * i));
-	}
-	for (i = 16; i < 80; i++)
+	for (int i = 16; i < 80; i++)
 	{
 		W[i] = Gamma1(W[i - 2]) + W[i - 7] + Gamma0(W[i - 15]) + W[i - 16];
 	}
-#define RND(a, b, c, d, e, f, g, h, i)              \
-	t0 = h + Sigma1(e) + Ch(e, f, g) + K[i] + W[i]; \
-	t1 = Sigma0(a) + Maj(a, b, c);                  \
-	d += t0;                                        \
-	h = t0 + t1;
-	for (i = 0; i < 80; i += 8)
+
+	for (int i = 0; i < 80; i += 8)
 	{
 		RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], i + 0);
 		RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], i + 1);
@@ -226,68 +222,38 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		RND(S[2], S[3], S[4], S[5], S[6], S[7], S[0], S[1], i + 6);
 		RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], i + 7);
 	}
-#undef RND
-	for (i = 0; i < 8; i++)
-	{
+	for (int i = 0; i < 8; i++)
 		md.state[i] = md.state[i] + S[i];
-	}
-	for (i = 0; i < 8; i++)
-	{
+	for (int i = 0; i < 8; i++)
 		STORE64H(md.state[i], privatek + (8 * i));
-	}
+
 	privatek[0] &= 248;
 	privatek[31] &= 63;
 	privatek[31] |= 64;
+
 	ge_scalarmult_base(&A, privatek);
 	ge_p3_tobytes(publick, &A);
+
 	size_t keysize = 256;
 	b58enc(key, &keysize, publick, 32);
-	int key_len = strlen(key);
-	for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+
+	int len_key = device_strlen(key);
+	if (device_strlen(suffix) <= len_key &&
+		device_strcmp(&key[len_key - 4], suffix) == 0)
 	{
-		int prefix_len = prefix_letter_counts[i];
-		bool match = true;
-		for (int j = 0; j < prefix_len; ++j)
+
+		atomicAdd(keys_found, 1);
+
+		FILE *outputFile = fopen("found_keys.txt", "a");
+		if (outputFile)
 		{
-			if (!(prefixes[i][prefix_len - j - 1] == '?' || prefixes[i][prefix_len - j - 1] == key[key_len - j - 1]))
-			{
-				match = false;
-				break;
-			}
-		}
-		if (match)
-		{
-			atomicAdd(keys_found, 1);
-			int index = atomicAdd(&found_key_count, 1);
-			if (index < MAX_KEYS)
-			{
-				int offset = 0;
-				for (int k = 0; k < 32; k++)
-				{
-					found_keys[index][2 * k] = "0123456789abcdef"[privatek[k] >> 4];
-					found_keys[index][2 * k + 1] = "0123456789abcdef"[privatek[k] & 0x0F];
-				}
-				found_keys[index][64] = ' ';
-				for (int k = 0; k < 32; k++)
-				{
-					found_keys[index][65 + 2 * k] = "0123456789abcdef"[publick[k] >> 4];
-					found_keys[index][65 + 2 * k + 1] = "0123456789abcdef"[publick[k] & 0x0F];
-				}
-				found_keys[index][129] = '\0';
-			}
+			fprintf(outputFile, "Private Key: ");
+			for (int k = 0; k < 32; k++)
+				fprintf(outputFile, "%02x", privatek[k]);
+			fprintf(outputFile, " Public Key: %s\n", key);
+			fclose(outputFile);
 		}
 	}
-	for (int i = 0; i < 32; ++i)
-	{
-		if (seed[i] == 255)
-		{
-			seed[i] = 0;
-		}
-		else
-		{
-			seed[i] += 1;
-			break;
-		}
-	}
+
 	state[id] = localState;
 }
