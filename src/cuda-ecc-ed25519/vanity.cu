@@ -282,16 +282,20 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	int suffix_len = device_strlen(suffix);
 
 	// Debug: Stampa la chiave e la sua lunghezza
-	printf("Generated key: %s (length: %d)\n", key, len_key);
-	printf("Suffix to match: %s (length: %d)\n", suffix, suffix_len);
+	// Controllo se la chiave contiene "pump" come suffisso
+	if (suffix_len <= len_key && device_strcmp(&key[len_key - suffix_len], suffix) == 0)
+	{
+		printf("Generated key with 'pump' suffix: %s (length: %d)\n", key, len_key);
+	}
+	// printf("Suffix to match: %s (length: %d)\n", suffix, suffix_len);
 
 	if (device_strlen(suffix) <= len_key &&
 		device_strcmp(&key[len_key - 4], suffix) == 0)
 
 	{
-		printf("Generated key: %s\n", key);						   // Stampa la chiave generata
-		printf("Checking suffix for key %s\n", &key[len_key - 4]); // Stampa i 4 caratteri finali
-		int index = atomicAdd(&found_key_count, 1);				   // Ottiene l'indice per memorizzare la chiave
+		// printf("Generated key: %s\n", key); // Stampa la chiave generata
+		//  printf("Checking suffix for key %s\n", &key[len_key - 4]); // Stampa i 4 caratteri finali
+		int index = atomicAdd(&found_key_count, 1); // Ottiene l'indice per memorizzare la chiave
 		if (index < MAX_KEYS)
 		{
 			// Converte la chiave privata in esadecimale e salva la chiave pubblica
