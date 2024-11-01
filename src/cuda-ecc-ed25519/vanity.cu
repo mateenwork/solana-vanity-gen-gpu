@@ -310,20 +310,9 @@ void __global__ vanity_scan(curandState *state)
 
 		size_t keysize = 256;
 		b58enc(key, &keysize, publick, 32);
+		int key_length = strlen(key);
 
-		// Code Until here runs at 22_000_000H/s. b58enc badly needs optimization.
-
-		// We don't have access to strncmp/strlen here, I don't know
-		// what the efficient way of doing this on a GPU is, so I'll
-		// start with a dumb loop. There seem to be implementations out
-		// there of bignunm division done in parallel as a CUDA kernel
-		// so it might make sense to write a new parallel kernel to do
-		// this.
-
-		// Controlla se gli ultimi `suffix_length` caratteri di `key` corrispondono a `suffix`
-		// Controlla se gli ultimi 4 caratteri di `key` corrispondono a "pump"
 		bool has_suffix = true;
-		int key_length = /* Assicurati di calcolare o conoscere la lunghezza di `key` */;
 
 		// Confronta manualmente gli ultimi 4 caratteri
 		if (key[key_length - 4] != 'p' || key[key_length - 3] != 'u' ||
@@ -340,14 +329,7 @@ void __global__ vanity_scan(curandState *state)
 			b58enc(pkey, &pkeysize, seed, 32);
 			printf("(%lu): %s - %s\n", keysize, key, pkey);
 		}
-		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
 
-		// Increment Seed.
-		// NOTE: This is horrifically insecure. Please don't use these
-		// keys on live. This increment is just so we don't have to
-		// invoke the CUDA random number generator for each hash to
-		// boost performance a little. Easy key generation, awful
-		// security.
 		for (int i = 0; i < 32; ++i)
 		{
 			if (seed[i] == 255)
