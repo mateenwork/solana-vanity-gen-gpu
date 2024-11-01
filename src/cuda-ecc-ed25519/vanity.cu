@@ -321,18 +321,15 @@ void __global__ vanity_scan(curandState *state)
 		// this.
 
 		// Controlla se gli ultimi `suffix_length` caratteri di `key` corrispondono a `suffix`
+		// Controlla se gli ultimi 4 caratteri di `key` corrispondono a "pump"
 		bool has_suffix = true;
-		for (int j = 0; j < suffix_length; ++j)
-		{
-			char lowered = (key[key_length - suffix_length + j] >= 65 && key[key_length - suffix_length + j] <= 90)
-							   ? key[key_length - suffix_length + j] + 32
-							   : key[key_length - suffix_length + j];
+		int key_length = /* Assicurati di calcolare o conoscere la lunghezza di `key` */;
 
-			if (suffix[j] != lowered)
-			{
-				has_suffix = false;
-				break;
-			}
+		// Confronta manualmente gli ultimi 4 caratteri
+		if (key[key_length - 4] != 'p' || key[key_length - 3] != 'u' ||
+			key[key_length - 2] != 'm' || key[key_length - 1] != 'p')
+		{
+			has_suffix = false;
 		}
 
 		// Se il suffisso è trovato, stampa o memorizza la chiave
@@ -343,7 +340,6 @@ void __global__ vanity_scan(curandState *state)
 			b58enc(pkey, &pkeysize, seed, 32);
 			printf("(%lu): %s - %s\n", keysize, key, pkey);
 		}
-
 		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
 
 		// Increment Seed.
