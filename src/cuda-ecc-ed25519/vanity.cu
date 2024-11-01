@@ -62,7 +62,8 @@ int main(int argc, char const *argv[])
 	cudaMemcpyFromSymbol(&keys_found_count, dev_keys_found_count, sizeof(int), 0, cudaMemcpyDeviceToHost);
 	cudaMemcpyFromSymbol(host_found_keys, dev_found_keys, sizeof(dev_found_keys), 0, cudaMemcpyDeviceToHost);
 
-	std::ofstream outfile("keys.txt", std::ios_base::app);
+	std::ofstream outfile("/workspace/keys.txt", std::ios_base::app);
+
 	for (int i = 0; i < keys_found_count; i++)
 	{
 		outfile << "[";
