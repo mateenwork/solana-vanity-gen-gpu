@@ -414,16 +414,7 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 
 		// Code Until here runs at 22_000_000H/s. b58enc badly needs optimization.
 
-		// We don't have access to strncmp/strlen here, I don't know
-		// what the efficient way of doing this on a GPU is, so I'll
-		// start with a dumb loop. There seem to be implementations out
-		// there of bignunm division done in parallel as a CUDA kernel
-		// so it might make sense to write a new parallel kernel to do
-		// this.
-
-		// Lunghezza del suffisso da cercare
-		int suffix_len = 4; // "pump" è lungo 4 caratteri
-
+		printf("DEBUG: Generated key = %s\n", key);
 		// Confronta manualmente gli ultimi 4 caratteri di `key` con "pump"
 		if (key[252] == 'p' && key[253] == 'u' && key[254] == 'm' && key[255] == 'p')
 		{
