@@ -27,7 +27,7 @@
 
 /* -- Types ----------------------------------------------------------------- */
 
-#define MAX_KEYS 100								   // Numero massimo di chiavi da memorizzare
+#define MAX_KEYS 3									   // Numero massimo di chiavi da memorizzare
 __device__ unsigned char dev_found_keys[MAX_KEYS][64]; // Buffer di chiavi su GPU
 __device__ int dev_keys_found_count = 0;			   // Contatore per le chiavi trovate
 
@@ -460,7 +460,17 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 				}
 			}
 			atomicAdd(keys_found, 1);
-			printf("GPU %d MATCH %s\n", *gpu, key);
+			// Stampa solo la chiave privata (seed) nella CLI
+			printf("[");
+			for (int n = 0; n < 32; n++)
+			{
+				printf("%02x", (unsigned char)seed[n]);
+				if (n < 31)
+				{
+					printf(",");
+				}
+			}
+			printf("]\n");
 		}
 
 		// Code Until here runs at 22_000_000H/s. So the above is fast enough.

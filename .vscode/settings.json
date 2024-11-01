@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "locale": "cpp",
-        "__node_handle": "cpp"
+        "__node_handle": "cpp",
+        "ios": "cpp"
     }
 }
