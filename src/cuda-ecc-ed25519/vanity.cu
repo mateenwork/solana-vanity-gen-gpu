@@ -88,6 +88,17 @@ __device__ void reverse_string(char *str, size_t len)
 	}
 }
 
+// Funzione per calcolare la lunghezza di una stringa in ambiente device
+__device__ size_t device_strlen(const char *str)
+{
+	size_t len = 0;
+	while (str[len] != '\0')
+	{
+		++len;
+	}
+	return len;
+}
+
 /* -- Vanity Step Functions ------------------------------------------------- */
 
 void vanity_setup(config &vanity)
@@ -432,8 +443,8 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 
-		// Inverti l'indirizzo generato in modo da verificare il suffisso come se fosse un prefisso
-		size_t key_len = strlen(key);
+		// Calcola la lunghezza di 'key' e inverti la stringa
+		size_t key_len = device_strlen(key);
 		reverse_string(key, key_len);
 
 		// Usa il confronto del prefisso esistente (ora funziona per il suffisso)
@@ -452,7 +463,6 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 				}
 			}
 		}
-
 		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
 
 		// Increment Seed.
