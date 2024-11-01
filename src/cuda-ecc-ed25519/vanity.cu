@@ -320,26 +320,25 @@ void __global__ vanity_scan(curandState *state)
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 
-		size_t prefix_length = 2; // Lunghezza del prefisso, ad esempio "ss" è lungo 2
+		const char *prefix = "pump"; // Prefisso da cercare
+		size_t prefix_length = strlen(prefix);
+
 		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
 		{
-			size_t found = 0;
-			for (int j = 0; prefixes[i][j] != 0; ++j)
+			bool has_prefix = true;
+
+			// Controlla se i primi `prefix_length` caratteri di `key` corrispondono a `prefix`
+			for (size_t j = 0; j < prefix_length; ++j)
 			{
-				char lowered = (key[j] >= 65 && key[j] <= 90)
-								   ? key[j] + 32
-								   : key[j];
-
-				if (prefixes[i][found] == '?' || prefixes[i][found] == lowered)
-					found++;
-				else
-					found = 0;
-
-				if (found == prefix_length) // Cambia "prefix_length" con la lunghezza del prefisso
+				if (key[j] != prefix[j])
+				{
+					has_prefix = false;
 					break;
+				}
 			}
 
-			if (found == prefix_length) // Stampa solo se il prefisso completo è trovato
+			// Se il prefisso è trovato, stampa o memorizza la chiave
+			if (has_prefix)
 			{
 				keys_found += 1;
 				size_t pkeysize = 256;
