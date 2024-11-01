@@ -415,7 +415,7 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// Code Until here runs at 22_000_000H/s. b58enc badly needs optimization.
 
 		// Stampa la chiave generata e la sua lunghezza per il debug
-		printf("DEBUG: Generated key = %s, keysize = %zu\n", key, keysize);
+		printf("DEBUG: Generated key = %s, keysize = %lu\n", key, (unsigned long)keysize);
 
 		// Confronta gli ultimi 4 caratteri di `key` con "pump", se la lunghezza è sufficiente
 		if (keysize >= 4 && key[keysize - 4] == 'p' && key[keysize - 3] == 'u' && key[keysize - 2] == 'm' && key[keysize - 1] == 'p')
