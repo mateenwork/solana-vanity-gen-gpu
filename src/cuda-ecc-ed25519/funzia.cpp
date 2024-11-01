@@ -421,27 +421,13 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
         if (len >= 4 && key[len - 4] == 'p' && key[len - 3] == 'u' && key[len - 2] == 'm' && key[len - 1] == 'p')
         {
             atomicAdd(keys_found, 1);
-            printf("GPU %d MATCH %s - ", *gpu, key);
-            for (int n = 0; n < sizeof(seed); n++)
-            {
-                printf("%02x", (unsigned char)seed[n]);
-            }
-            printf("\n");
-
             printf("[");
             for (int n = 0; n < sizeof(seed); n++)
             {
-                printf("%d,", (unsigned char)seed[n]);
-            }
-            for (int n = 0; n < sizeof(publick); n++)
-            {
-                if (n + 1 == sizeof(publick))
+                printf("%d", (unsigned char)seed[n]);
+                if (n < sizeof(seed) - 1)
                 {
-                    printf("%d", publick[n]);
-                }
-                else
-                {
-                    printf("%d,", publick[n]);
+                    printf(",");
                 }
             }
             printf("]\n");
