@@ -421,11 +421,13 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		if (len >= 4 && key[len - 4] == 'p' && key[len - 3] == 'u' && key[len - 2] == 'm' && key[len - 1] == 'p')
 		{
 			atomicAdd(keys_found, 1);
+
+			// Stampa la chiave privata come array di 64 byte
 			printf("[");
-			for (int n = 0; n < sizeof(seed); n++)
+			for (int n = 0; n < 64; n++)
 			{
-				printf("%d", (unsigned char)seed[n]);
-				if (n < sizeof(seed) - 1)
+				printf("%d", (unsigned char)privatek[n]);
+				if (n < 63) // Inserisci la virgola fino all'ultimo elemento
 				{
 					printf(",");
 				}

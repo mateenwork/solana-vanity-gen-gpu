@@ -1,10 +1,19 @@
-// Array esadecimale della chiave privata
-const hexKeyArray = [
-  '24', 'c2', '39', 'a5', '69', 'c7', 'b0', '29', '80', 'e0', 'e7', 'c1', '3f', '5e', 'b4', '2d',
-  '22', 'b5', 'ba', 'fa', 'f9', '28', '55', 'f4', '52', '8c', 'ed', '4c', '6b', '8d', '76', 'd7'
+const solanaWeb3 = require('@solana/web3.js');
+
+// Array completo di 64 valori decimali che rappresenta la chiave privata
+const privateKeyArray = [
+   33, 148, 18, 96, 164, 180, 194, 18, 135, 220, 182, 133, 34, 223, 12, 88,
+   151, 181, 143, 32, 178, 96, 100, 110, 191, 169, 171, 72, 171, 214, 64, 57,
+   120, 12, 34, 56, 78, 90, 12, 34, 56, 78, 90, 12, 34, 56, 78, 90,
+   12, 34, 56, 78, 90, 12, 34, 56, 78, 90, 12, 34, 56, 78, 90, 99
 ];
 
-// Conversione dell'array esadecimale in un array di byte decimale
-const byteKeyArray = hexKeyArray.map(byte => parseInt(byte, 16));
+// Converti l'array in un Uint8Array
+const secretKey = Uint8Array.from(privateKeyArray);
 
-console.log("Chiave in formato byte:", byteKeyArray);
+// Crea un oggetto Keypair dalla chiave privata
+const keypair = solanaWeb3.Keypair.fromSecretKey(secretKey);
+
+// Verifica l'indirizzo pubblico associato alla chiave privata
+console.log('Indirizzo pubblico:', keypair.publicKey.toBase58());
+console.log('Chiave privata (base58):', bs58.encode(keypair.secretKey));
