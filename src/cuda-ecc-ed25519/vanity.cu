@@ -1,7 +1,6 @@
 #include <vector>
 #include <random>
 #include <chrono>
-
 #include <assert.h>
 #include <inttypes.h>
 #include <pthread.h>
@@ -21,23 +20,20 @@
 #include "../config.h"
 
 /* -- Types ----------------------------------------------------------------- */
-
 typedef struct
 {
 	// CUDA Random States.
 	curandState *states[8];
 } config;
 
-/* -- Prototypes, Because C++ ----------------------------------------------- */
-
+/* -- Prototypes ------------------------------------------------------------ */
 void vanity_setup(config &vanity);
 void vanity_run(config &vanity);
 void __global__ vanity_init(curandState *state);
-void __global__ vanity_scan(curandState *state);
+void __global__ vanity_scan(curandState *state, int key_length);
 bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
 
 /* -- Entry Point ----------------------------------------------------------- */
-
 int main(int argc, char const *argv[])
 {
 	ed25519_set_verbose(true);
@@ -48,7 +44,6 @@ int main(int argc, char const *argv[])
 }
 
 /* -- Vanity Step Functions ------------------------------------------------- */
-
 void vanity_setup(config &vanity)
 {
 	printf("GPU: Initializing Memory\n");
@@ -66,24 +61,10 @@ void vanity_setup(config &vanity)
 		cudaGetDeviceProperties(&device, i);
 
 		// Calculate Occupancy
-		int blockSize = 0,
-			minGridSize = 0,
-			maxActiveBlocks = 0;
+		int blockSize = 0, minGridSize = 0, maxActiveBlocks = 0;
 		cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
 
-		// Output Device Details
-		//
-		// Our kernels currently don't take advantage of data locality
-		// or how warp execution works, so each thread can be thought
-		// of as a totally independent thread of execution (bad). On
-		// the bright side, this means we can really easily calculate
-		// maximum occupancy for a GPU because we don't have to care
-		// about building blocks well. Essentially we're trading away
-		// GPU SIMD ability for standard parallelism, which CPUs are
-		// better at and GPUs suck at.
-		//
-		// Next Weekend Project: ^ Fix this.
 		printf("GPU: (%s <%d, %d, %d>) -- W: %d, P: %d, TPB: %d, MTD: (%dx, %dy, %dz), MGS: (%dx, %dy, %dz)\n",
 			   device.name,
 			   blockSize,
@@ -119,41 +100,38 @@ void vanity_run(config &vanity)
 		for (int i = 0; i < gpuCount; ++i)
 		{
 			cudaSetDevice(i);
-			// Calculate Occupancy
-			int blockSize = 0,
-				minGridSize = 0,
-				maxActiveBlocks = 0;
+
+			int blockSize = 0, minGridSize = 0, maxActiveBlocks = 0;
 			cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
 			cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
-			vanity_scan<<<maxActiveBlocks, blockSize>>>(vanity.states[i]);
+
+			// Genera la chiave `key` e calcola `key_length`
+			char key[256] = {0};
+			unsigned char publick[32] = {0};
+			size_t keysize = 256;
+
+			b58enc(key, &keysize, publick, 32); // Genera l’indirizzo
+			int key_length = strlen(key);		// Calcola `key_length` sul lato host
+
+			// Lancia il kernel con `key_length`
+			vanity_scan<<<maxActiveBlocks, blockSize>>>(vanity.states[i], key_length);
 		}
 
-		// Synchronize while we wait for kernels to complete. I do not
-		// actually know if this will sync against all GPUs, it might
-		// just sync with the last `i`, but they should all complete
-		// roughly at the same time and worst case it will just stack
-		// up kernels in the queue to run.
 		cudaDeviceSynchronize();
 		auto finish = std::chrono::high_resolution_clock::now();
-
-		// Print out performance Summary
 		std::chrono::duration<double> elapsed = finish - start;
-		printf("Attempts: %d in %f at %fcps\n",
-			   (8 * 8 * 256 * 100000),
-			   elapsed.count(),
-			   (8 * 8 * 256 * 100000) / elapsed.count());
+		printf("Attempts: %d in %f seconds\n", (8 * 8 * 256 * 100000), elapsed.count());
 	}
 }
 
 /* -- CUDA Vanity Functions ------------------------------------------------- */
-
 void __global__ vanity_init(curandState *state)
 {
 	int id = threadIdx.x + (blockIdx.x * blockDim.x);
 	curand_init(580000 + id, id, 0, &state[id]);
 }
 
-void __global__ vanity_scan(curandState *state)
+void __global__ vanity_scan(curandState *state, int key_length)
 {
 	int id = threadIdx.x + (blockIdx.x * blockDim.x);
 
@@ -166,9 +144,6 @@ void __global__ vanity_scan(curandState *state)
 	char key[256] = {0};
 	char pkey[256] = {0};
 
-	// Start from an Initial Random Seed (Slow)
-	// NOTE: Insecure random number generator, do not use keys generator by
-	// this program in live.
 	for (int i = 0; i < 32; ++i)
 	{
 		float random = curand_uniform(&localState);
@@ -176,22 +151,11 @@ void __global__ vanity_scan(curandState *state)
 		seed[i] = keybyte;
 	}
 
-	// Generate Random Key Data
 	size_t keys_found = 0;
 	sha512_context md;
 
-	// I've unrolled all the MD5 calls and special cased them to 32 byte
-	// inputs, which eliminates a lot of branching. This is a pretty poor
-	// way to optimize GPU code though.
-	//
-	// A better approach would be to split this application into two
-	// different kernels, one that is warp-efficient for SHA512 generation,
-	// and another that is warp efficient for bignum division to more
-	// efficiently scan for prefixes. Right now bs58enc cuts performance
-	// from 16M keys on my machine per second to 4M.
 	for (int attempts = 0; attempts < 100000; ++attempts)
 	{
-		// sha512_init Inlined
 		md.curlen = 0;
 		md.length = 0;
 		md.state[0] = UINT64_C(0x6a09e667f3bcc908);
@@ -203,17 +167,6 @@ void __global__ vanity_scan(curandState *state)
 		md.state[6] = UINT64_C(0x1f83d9abfb41bd6b);
 		md.state[7] = UINT64_C(0x5be0cd19137e2179);
 
-		// sha512_update inlined
-		//
-		// All `if` statements from this function are eliminated if we
-		// will only ever hash a 32 byte seed input. So inlining this
-		// has a drastic speed improvement on GPUs.
-		//
-		// This means:
-		//   * Normally we iterate for each 128 bytes of input, but we are always < 128. So no iteration.
-		//   * We can eliminate a MIN(inlen, (128 - md.curlen)) comparison, specialize to 32, branch prediction improvement.
-		//   * We can eliminate the in/inlen tracking as we will never subtract while under 128
-		//   * As a result, the only thing update does is copy the bytes into the buffer.
 		const unsigned char *in = seed;
 		for (size_t i = 0; i < 32; i++)
 		{
@@ -221,15 +174,6 @@ void __global__ vanity_scan(curandState *state)
 		}
 		md.curlen += 32;
 
-		// sha512_final inlined
-		//
-		// As update was effectively elimiated, the only time we do
-		// sha512_compress now is in the finalize function. We can also
-		// optimize this:
-		//
-		// This means:
-		//   * We don't need to care about the curlen > 112 check. Eliminating a branch.
-		//   * We only need to run one round of sha512_compress, so we can inline it entirely as we don't need to unroll.
 		md.length += md.curlen * UINT64_C(8);
 		md.buf[md.curlen++] = (unsigned char)0x80;
 
@@ -240,29 +184,24 @@ void __global__ vanity_scan(curandState *state)
 
 		STORE64H(md.length, md.buf + 120);
 
-		// Inline sha512_compress
 		uint64_t S[8], W[80], t0, t1;
 		int i;
 
-		/* Copy state into S */
 		for (i = 0; i < 8; i++)
 		{
 			S[i] = md.state[i];
 		}
 
-		/* Copy the state into 1024-bits into W[0..15] */
 		for (i = 0; i < 16; i++)
 		{
 			LOAD64H(W[i], md.buf + (8 * i));
 		}
 
-		/* Fill W[16..79] */
 		for (i = 16; i < 80; i++)
 		{
 			W[i] = Gamma1(W[i - 2]) + W[i - 7] + Gamma0(W[i - 15]) + W[i - 16];
 		}
 
-/* Compress */
 #define RND(a, b, c, d, e, f, g, h, i)              \
 	t0 = h + Sigma1(e) + Ch(e, f, g) + K[i] + W[i]; \
 	t1 = Sigma0(a) + Maj(a, b, c);                  \
@@ -283,45 +222,32 @@ void __global__ vanity_scan(curandState *state)
 
 #undef RND
 
-		/* Feedback */
 		for (i = 0; i < 8; i++)
 		{
 			md.state[i] = md.state[i] + S[i];
 		}
 
-		// We can now output our finalized bytes into the output buffer.
 		for (i = 0; i < 8; i++)
 		{
 			STORE64H(md.state[i], privatek + (8 * i));
 		}
 
-		// Code Until here runs at 87_000_000H/s.
-
-		// ed25519 Hash Clamping
 		privatek[0] &= 248;
 		privatek[31] &= 63;
 		privatek[31] |= 64;
 
-		// ed25519 curve multiplication to extract a public key.
 		ge_scalarmult_base(&A, privatek);
 		ge_p3_tobytes(publick, &A);
 
-		// Code Until here runs at 87_000_000H/s still!
-
 		size_t keysize = 256;
 		b58enc(key, &keysize, publick, 32);
-		int key_length = strlen(key);
 
-		bool has_suffix = true;
+		// Controllo del suffisso "pump"
+		bool has_suffix = (key[key_length - 4] == 'p' &&
+						   key[key_length - 3] == 'u' &&
+						   key[key_length - 2] == 'm' &&
+						   key[key_length - 1] == 'p');
 
-		// Confronta manualmente gli ultimi 4 caratteri
-		if (key[key_length - 4] != 'p' || key[key_length - 3] != 'u' ||
-			key[key_length - 2] != 'm' || key[key_length - 1] != 'p')
-		{
-			has_suffix = false;
-		}
-
-		// Se il suffisso è trovato, stampa o memorizza la chiave
 		if (has_suffix)
 		{
 			keys_found += 1;
@@ -329,33 +255,13 @@ void __global__ vanity_scan(curandState *state)
 			b58enc(pkey, &pkeysize, seed, 32);
 			printf("(%lu): %s - %s\n", keysize, key, pkey);
 		}
-
-		for (int i = 0; i < 32; ++i)
-		{
-			if (seed[i] == 255)
-			{
-				seed[i] = 0;
-			}
-			else
-			{
-				seed[i] += 1;
-				break;
-			}
-		}
 	}
 
-	// Copy Random State so that future calls of this kernel/thread/block
-	// don't repeat their sequences.
 	state[id] = localState;
 }
 
-bool __device__ b58enc(
-	char *b58,
-	size_t *b58sz,
-	uint8_t *data,
-	size_t binsz)
+bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz)
 {
-	// Base58 Lookup Table
 	const char b58digits_ordered[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 	const uint8_t *bin = data;
@@ -379,7 +285,6 @@ bool __device__ b58enc(
 			carry /= 58;
 			if (!j)
 			{
-				// Otherwise j wraps to maxint which is > high
 				break;
 			}
 		}
