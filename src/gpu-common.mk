@@ -1,5 +1,5 @@
 NVCC:=nvcc
-GPU_PTX_ARCH:=compute_79
+GPU_PTX_ARCH:=compute_70
 GPU_ARCHS?=sm_70,sm_80
 GPU_CFLAGS:=--gpu-code=$(GPU_ARCHS),$(GPU_PTX_ARCH) --gpu-architecture=$(GPU_PTX_ARCH)
 CFLAGS_release:=--ptxas-options=-v $(GPU_CFLAGS) -O3 -Xcompiler "-Wall -Werror -fPIC -Wno-strict-aliasing"
