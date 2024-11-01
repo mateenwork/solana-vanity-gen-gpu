@@ -337,7 +337,7 @@ void __global__ vanity_scan(curandState *state)
 					break;
 			}
 
-			if (found == 6)
+			if (found > 0)
 			{
 				keys_found += 1;
 				size_t pkeysize = 256;
