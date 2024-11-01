@@ -412,12 +412,23 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		size_t keysize = 256;
 		b58enc(key, &keysize, publick, 32);
 
-		// Code Until here runs at 22_000_000H/s. b58enc badly needs optimization.
+		// Debug temporaneo per vedere se "pump" appare ovunque nella chiave
+		bool found_pump_anywhere = false;
+		for (size_t i = 0; i <= keysize - 4; ++i)
+		{ // Evita overflow
+			if (key[i] == 'p' && key[i + 1] == 'u' && key[i + 2] == 'm' && key[i + 3] == 'p')
+			{
+				found_pump_anywhere = true;
+				break;
+			}
+		}
 
-		// Stampa la chiave generata e la sua lunghezza per il debug
-		printf("DEBUG: Generated key = %s, keysize = %lu\n", key, (unsigned long)keysize);
+		if (found_pump_anywhere)
+		{
+			printf("DEBUG: 'pump' found somewhere in key: %s\n", key);
+		}
 
-		// Confronta gli ultimi 4 caratteri di `key` con "pump", se la lunghezza è sufficiente
+		// Continua con il normale controllo del suffisso
 		if (keysize >= 4 && key[keysize - 4] == 'p' && key[keysize - 3] == 'u' && key[keysize - 2] == 'm' && key[keysize - 1] == 'p')
 		{
 			atomicAdd(keys_found, 1);
