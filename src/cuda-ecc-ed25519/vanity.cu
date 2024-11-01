@@ -31,11 +31,6 @@ typedef struct
 	curandState *states[8];
 } config;
 
-__constant__ char prefixes[][5] = {"pump"};
-
-// Calcola il numero massimo di pattern
-#define MAX_PATTERNS (sizeof(prefixes) / sizeof(prefixes[0]))
-
 /* -- Prototypes, Because C++ ----------------------------------------------- */
 
 void vanity_setup(config &vanity);
@@ -65,7 +60,7 @@ std::string getTimeStr()
 }
 
 // SMITH - safe? who knows
-__host__ unsigned long long int makeSeed()
+unsigned long long int makeSeed()
 {
 	unsigned long long int seed = 0;
 	char *pseed = (char *)&seed;
@@ -74,7 +69,7 @@ __host__ unsigned long long int makeSeed()
 
 	for (unsigned int b = 0; b < sizeof(seed); b++)
 	{
-		unsigned int r = rd(); // Sostituito 'auto' con 'unsigned int'
+		auto r = rd();
 		char *entropy = (char *)&r;
 		pseed[b] = entropy[0];
 	}
@@ -250,13 +245,16 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 
 	// SMITH - should really be passed in, but hey ho
 	int prefix_letter_counts[MAX_PATTERNS];
-	for (int n = 0; n < MAX_PATTERNS; ++n)
+	for (unsigned int n = 0; n < sizeof(prefixes) / sizeof(prefixes[0]); ++n)
 	{
-		int letter_count = 0;
-		while (prefixes[n][letter_count] != '\0')
+		if (MAX_PATTERNS == n)
 		{
-			letter_count++;
+			printf("NEVER SPEAK TO ME OR MY SON AGAIN");
+			return;
 		}
+		int letter_count = 0;
+		for (; prefixes[n][letter_count] != 0; letter_count++)
+			;
 		prefix_letter_counts[n] = letter_count;
 	}
 
@@ -423,39 +421,71 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 
-		for (int i = 0; i < MAX_PATTERNS; ++i)
+		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
 		{
-			int suffix_length = prefix_letter_counts[i];
-			int start_pos = keysize - suffix_length;
-			if (start_pos >= 0)
+
+			for (int j = 0; j < prefix_letter_counts[i]; ++j)
 			{
-				for (int j = 0; j < suffix_length; ++j)
+
+				// it doesn't match this prefix, no need to continue
+				if (!(prefixes[i][j] == '?') && !(prefixes[i][j] == key[j]))
 				{
-					if (!(prefixes[i][j] == '?') && !(prefixes[i][j] == key[start_pos + j]))
+					break;
+				}
+
+				// we got to the end of the prefix pattern, it matched!
+				if (j == (prefix_letter_counts[i] - 1))
+				{
+					atomicAdd(keys_found, 1);
+					// size_t pkeysize = 256;
+					// b58enc(pkey, &pkeysize, seed, 32);
+
+					// SMITH
+					// The 'key' variable is the public key in base58 'address' format
+					// We display the seed in hex
+
+					// Solana stores the keyfile as seed (first 32 bytes)
+					// followed by public key (last 32 bytes)
+					// as an array of decimal numbers in json format
+
+					printf("GPU %d MATCH %s - ", *gpu, key);
+					for (int n = 0; n < sizeof(seed); n++)
 					{
-						break;
+						printf("%02x", (unsigned char)seed[n]);
 					}
-					if (j == (suffix_length - 1))
+					printf("\n");
+
+					printf("[");
+					for (int n = 0; n < sizeof(seed); n++)
 					{
-						// Match found
-						atomicAdd(keys_found, 1);
-						printf("GPU %d MATCH %s - ", *gpu, key);
-						for (int n = 0; n < sizeof(seed); n++)
-						{
-							printf("%02x", (unsigned char)seed[n]);
-						}
-						printf("\n[");
-						for (int n = 0; n < sizeof(seed); n++)
-						{
-							printf("%d,", (unsigned char)seed[n]);
-						}
-						for (int n = 0; n < sizeof(publick); n++)
-						{
-							printf("%d%s", publick[n], (n + 1 == sizeof(publick)) ? "" : ",");
-						}
-						printf("]\n");
-						break;
+						printf("%d,", (unsigned char)seed[n]);
 					}
+					for (int n = 0; n < sizeof(publick); n++)
+					{
+						if (n + 1 == sizeof(publick))
+						{
+							printf("%d", publick[n]);
+						}
+						else
+						{
+							printf("%d,", publick[n]);
+						}
+					}
+					printf("]\n");
+
+					/*
+					printf("Public: ");
+										for(int n=0; n<sizeof(publick); n++) { printf("%d ",publick[n]); }
+					printf("\n");
+					printf("Private: ");
+										for(int n=0; n<sizeof(privatek); n++) { printf("%d ",privatek[n]); }
+					printf("\n");
+					printf("Seed: ");
+										for(int n=0; n<sizeof(seed); n++) { printf("%d ",seed[n]); }
+					printf("\n");
+										*/
+
+					break;
 				}
 			}
 		}
