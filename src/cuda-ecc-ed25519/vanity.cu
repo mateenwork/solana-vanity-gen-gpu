@@ -421,73 +421,35 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 
-		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+		// Lunghezza del suffisso da cercare ("pump" è lungo 4 caratteri)
+		int suffix_len = 4;
+		if (strncmp(&key[strlen(key) - suffix_len], "pump", suffix_len) == 0)
 		{
-
-			for (int j = 0; j < prefix_letter_counts[i]; ++j)
+			atomicAdd(keys_found, 1);
+			printf("GPU %d MATCH %s - ", *gpu, key);
+			for (int n = 0; n < sizeof(seed); n++)
 			{
+				printf("%02x", (unsigned char)seed[n]);
+			}
+			printf("\n");
 
-				// it doesn't match this prefix, no need to continue
-				if (!(prefixes[i][j] == '?') && !(prefixes[i][j] == key[j]))
+			printf("[");
+			for (int n = 0; n < sizeof(seed); n++)
+			{
+				printf("%d,", (unsigned char)seed[n]);
+			}
+			for (int n = 0; n < sizeof(publick); n++)
+			{
+				if (n + 1 == sizeof(publick))
 				{
-					break;
+					printf("%d", publick[n]);
 				}
-
-				// we got to the end of the prefix pattern, it matched!
-				if (j == (prefix_letter_counts[i] - 1))
+				else
 				{
-					atomicAdd(keys_found, 1);
-					// size_t pkeysize = 256;
-					// b58enc(pkey, &pkeysize, seed, 32);
-
-					// SMITH
-					// The 'key' variable is the public key in base58 'address' format
-					// We display the seed in hex
-
-					// Solana stores the keyfile as seed (first 32 bytes)
-					// followed by public key (last 32 bytes)
-					// as an array of decimal numbers in json format
-
-					printf("GPU %d MATCH %s - ", *gpu, key);
-					for (int n = 0; n < sizeof(seed); n++)
-					{
-						printf("%02x", (unsigned char)seed[n]);
-					}
-					printf("\n");
-
-					printf("[");
-					for (int n = 0; n < sizeof(seed); n++)
-					{
-						printf("%d,", (unsigned char)seed[n]);
-					}
-					for (int n = 0; n < sizeof(publick); n++)
-					{
-						if (n + 1 == sizeof(publick))
-						{
-							printf("%d", publick[n]);
-						}
-						else
-						{
-							printf("%d,", publick[n]);
-						}
-					}
-					printf("]\n");
-
-					/*
-					printf("Public: ");
-										for(int n=0; n<sizeof(publick); n++) { printf("%d ",publick[n]); }
-					printf("\n");
-					printf("Private: ");
-										for(int n=0; n<sizeof(privatek); n++) { printf("%d ",privatek[n]); }
-					printf("\n");
-					printf("Seed: ");
-										for(int n=0; n<sizeof(seed); n++) { printf("%d ",seed[n]); }
-					printf("\n");
-										*/
-
-					break;
+					printf("%d,", publick[n]);
 				}
 			}
+			printf("]\n");
 		}
 
 		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
