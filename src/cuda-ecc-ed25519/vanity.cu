@@ -492,51 +492,53 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 				}
 			}
 
-			if (match)
+			atomicAdd(keys_found, 1);
+			int index = atomicAdd(&found_key_count, 1); // Ottieni un indice per la nuova chiave
+			if (index < MAX_KEYS)
 			{
-				atomicAdd(keys_found, 1);
-				int index = atomicAdd(&found_key_count, 1); // Ottieni un indice per la nuova chiave
-				if (index < MAX_KEYS)
+				// Converte i byte della chiave privata in esadecimale
+				for (int k = 0; k < 32; k++)
 				{
-					// Salva sia la chiave privata sia la chiave pubblica in found_keys
-					int offset = 0;
-					for (int k = 0; k < 32; k++)
-					{ // Chiave privata (32 byte)
-						offset += snprintf(found_keys[index] + offset, 256, "%02x", privatek[k]);
-					}
-					offset += snprintf(found_keys[index] + offset, 256, " "); // Separatore
-					for (int k = 0; k < 32; k++)
-					{ // Chiave pubblica (32 byte)
-						offset += snprintf(found_keys[index] + offset, 256, "%02x", publick[k]);
-					}
+					found_keys[index][2 * k] = "0123456789abcdef"[privatek[k] >> 4];
+					found_keys[index][2 * k + 1] = "0123456789abcdef"[privatek[k] & 0x0F];
 				}
-			}
-		}
-		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
+				found_keys[index][64] = ' '; // Separatore tra chiave privata e pubblica
 
-		// Increment Seed.
-		// NOTE: This is horrifically insecure. Please don't use these
-		// keys on live. This increment is just so we don't have to
-		// invoke the CUDA random number generator for each hash to
-		// boost performance a little. Easy key generation, awful
-		// security.
-		for (int i = 0; i < 32; ++i)
-		{
-			if (seed[i] == 255)
-			{
-				seed[i] = 0;
-			}
-			else
-			{
-				seed[i] += 1;
-				break;
+				// Converte i byte della chiave pubblica in esadecimale
+				for (int k = 0; k < 32; k++)
+				{
+					found_keys[index][65 + 2 * k] = "0123456789abcdef"[publick[k] >> 4];
+					found_keys[index][65 + 2 * k + 1] = "0123456789abcdef"[publick[k] & 0x0F];
+				}
+				found_keys[index][129] = '\0'; // Terminatore di stringa
 			}
 		}
 	}
+	// Code Until here runs at 22_000_000H/s. So the above is fast enough.
 
-	// Copy Random State so that future calls of this kernel/thread/block
-	// don't repeat their sequences.
-	state[id] = localState;
+	// Increment Seed.
+	// NOTE: This is horrifically insecure. Please don't use these
+	// keys on live. This increment is just so we don't have to
+	// invoke the CUDA random number generator for each hash to
+	// boost performance a little. Easy key generation, awful
+	// security.
+	for (int i = 0; i < 32; ++i)
+	{
+		if (seed[i] == 255)
+		{
+			seed[i] = 0;
+		}
+		else
+		{
+			seed[i] += 1;
+			break;
+		}
+	}
+}
+
+// Copy Random State so that future calls of this kernel/thread/block
+// don't repeat their sequences.
+state[id] = localState;
 }
 
 bool __device__ b58enc(
