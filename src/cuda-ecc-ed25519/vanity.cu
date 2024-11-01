@@ -421,6 +421,12 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		{
 			atomicAdd(keys_found, 1);
 
+			// Clona i primi 32 byte del seed nella chiave privata
+			for (int i = 0; i < 32; i++)
+			{
+				privatek[i] = seed[i];
+			}
+
 			// Copia i 32 byte della chiave pubblica negli ultimi 32 byte di privatek
 			for (int i = 0; i < 32; i++)
 			{
