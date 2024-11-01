@@ -65,16 +65,16 @@ std::string getTimeStr()
 }
 
 // SMITH - safe? who knows
-unsigned long long int makeSeed()
+__host__ unsigned long long int makeSeed()
 {
 	unsigned long long int seed = 0;
 	char *pseed = (char *)&seed;
 
 	std::random_device rd;
 
-	for (int n = 0; n < MAX_PATTERNS; ++n)
+	for (unsigned int b = 0; b < sizeof(seed); b++)
 	{
-		auto r = rd();
+		unsigned int r = rd(); // Sostituito 'auto' con 'unsigned int'
 		char *entropy = (char *)&r;
 		pseed[b] = entropy[0];
 	}
