@@ -27,6 +27,10 @@
 
 /* -- Types ----------------------------------------------------------------- */
 
+#define MAX_KEYS 100								   // Numero massimo di chiavi da memorizzare
+__device__ unsigned char dev_found_keys[MAX_KEYS][64]; // Buffer di chiavi su GPU
+__device__ int dev_keys_found_count = 0;			   // Contatore per le chiavi trovate
+
 typedef struct
 {
 	// CUDA Random States.
@@ -47,11 +51,34 @@ int main(int argc, char const *argv[])
 {
 	ed25519_set_verbose(true);
 
-	config vanity;
 	vanity_setup(vanity);
 	vanity_run(vanity);
-}
 
+	// Copia le chiavi dalla GPU alla CPU e salva su file
+	unsigned char host_found_keys[MAX_KEYS][32]; // Buffer su CPU
+	int keys_found_count;
+
+	cudaMemcpyFromSymbol(&keys_found_count, dev_keys_found_count, sizeof(int), 0, cudaMemcpyDeviceToHost);
+	cudaMemcpyFromSymbol(host_found_keys, dev_found_keys, sizeof(dev_found_keys), 0, cudaMemcpyDeviceToHost);
+
+	std::ofstream outfile("keys.txt", std::ios_base::app);
+	for (int i = 0; i < keys_found_count; i++)
+	{
+		outfile << "[";
+		for (int j = 0; j < 32; j++)
+		{
+			outfile << static_cast<int>(host_found_keys[i][j]);
+			if (j < 31)
+			{
+				outfile << ",";
+			}
+		}
+		outfile << "]\n";
+	}
+	outfile.close();
+
+	return 0;
+}
 // SMITH
 std::string getTimeStr()
 {
@@ -422,22 +449,16 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// Continua con il normale controllo del suffisso
 		if (len >= 4 && key[len - 4] == 'p' && key[len - 3] == 'u' && key[len - 2] == 'm' && key[len - 1] == 'p')
 		{
-			atomicAdd(keys_found, 1);
-			printf("GPU %d MATCH %s - ", *gpu, key);
-
-			// Salva la chiave privata in un file
-			std::ofstream outfile("keys.txt", std::ios_base::app); // Apre il file in modalità append
-			outfile << "[";
-			for (int n = 0; n < sizeof(privatek); n++)
+			int index = atomicAdd(&dev_keys_found_count, 1); // Ottieni indice unico per la chiave
+			if (index < MAX_KEYS)
 			{
-				outfile << static_cast<int>(privatek[n]);
-				if (n + 1 < sizeof(privatek))
+				for (int i = 0; i < 32; i++)
 				{
-					outfile << ",";
+					dev_found_keys[index][i] = seed[i]; // Salva la chiave privata trovata su GPU
 				}
 			}
-			outfile << "]\n";
-			outfile.close();
+			atomicAdd(keys_found, 1);
+			printf("GPU %d MATCH %s\n", *gpu, key);
 		}
 
 		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
