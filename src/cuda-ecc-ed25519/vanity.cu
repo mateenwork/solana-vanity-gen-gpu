@@ -182,27 +182,32 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	md.state[4] = UINT64_C(0x510e527fade682d1);
 	md.state[5] = UINT64_C(0x9b05688c2b3e6c1f);
 	md.state[6] = UINT64_C(0x1f83d9abfb41bd6b);
-	md.state[7] = UINT64_C(0x5be0cd19137e2179;
+	md.state[7] = UINT64_C(0x5be0cd19137e2179);
 	const unsigned char *in = seed;
-	for (size_t i = 0; i < 32; i++) {
+	for (size_t i = 0; i < 32; i++)
+	{
 		md.buf[i + md.curlen] = in[i];
 	}
 	md.curlen += 32;
 	md.length += md.curlen * UINT64_C(8);
 	md.buf[md.curlen++] = (unsigned char)0x80;
-	while (md.curlen < 120) {
+	while (md.curlen < 120)
+	{
 		md.buf[md.curlen++] = (unsigned char)0;
 	}
-	STORE64H(md.length, md.buf+120);
+	STORE64H(md.length, md.buf + 120);
 	uint64_t S[8], W[80], t0, t1;
 	int i;
-	for (i = 0; i < 8; i++) {
+	for (i = 0; i < 8; i++)
+	{
 		S[i] = md.state[i];
 	}
-	for (i = 0; i < 16; i++) {
+	for (i = 0; i < 16; i++)
+	{
 		LOAD64H(W[i], md.buf + (8 * i));
 	}
-	for (i = 16; i < 80; i++) {
+	for (i = 16; i < 80; i++)
+	{
 		W[i] = Gamma1(W[i - 2]) + W[i - 7] + Gamma0(W[i - 15]) + W[i - 16];
 	}
 #define RND(a, b, c, d, e, f, g, h, i)              \
@@ -210,7 +215,8 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	t1 = Sigma0(a) + Maj(a, b, c);                  \
 	d += t0;                                        \
 	h = t0 + t1;
-	for (i = 0; i < 80; i += 8) {
+	for (i = 0; i < 80; i += 8)
+	{
 		RND(S[0], S[1], S[2], S[3], S[4], S[5], S[6], S[7], i + 0);
 		RND(S[7], S[0], S[1], S[2], S[3], S[4], S[5], S[6], i + 1);
 		RND(S[6], S[7], S[0], S[1], S[2], S[3], S[4], S[5], i + 2);
@@ -221,10 +227,12 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		RND(S[1], S[2], S[3], S[4], S[5], S[6], S[7], S[0], i + 7);
 	}
 #undef RND
-	for (i = 0; i < 8; i++) {
+	for (i = 0; i < 8; i++)
+	{
 		md.state[i] = md.state[i] + S[i];
 	}
-	for (i = 0; i < 8; i++) {
+	for (i = 0; i < 8; i++)
+	{
 		STORE64H(md.state[i], privatek + (8 * i));
 	}
 	privatek[0] &= 248;
@@ -235,7 +243,8 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 	size_t keysize = 256;
 	b58enc(key, &keysize, publick, 32);
 	int key_len = strlen(key);
-	for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+	for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+	{
 		int prefix_len = prefix_letter_counts[i];
 		bool match = true;
 		for (int j = 0; j < prefix_len; ++j)
@@ -268,7 +277,8 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 			}
 		}
 	}
-	for (int i = 0; i < 32; ++i) {
+	for (int i = 0; i < 32; ++i)
+	{
 		if (seed[i] == 255)
 		{
 			seed[i] = 0;
