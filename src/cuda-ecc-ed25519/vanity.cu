@@ -33,6 +33,10 @@ typedef struct
 
 /* -- Prototypes, Because C++ ----------------------------------------------- */
 
+#define MAX_KEYS 1000 // Definisci un massimo di chiavi trovate
+__device__ char found_keys[MAX_KEYS][256];
+__device__ int found_key_count = 0; // Contatore delle chiavi trovate
+
 void vanity_setup(config &vanity);
 void vanity_run(config &vanity);
 void __global__ vanity_init(unsigned long long int *seed, curandState *state);
@@ -216,6 +220,30 @@ void vanity_run(config &vanity)
 		// roughly at the same time and worst case it will just stack
 		// up kernels in the queue to run.
 		cudaDeviceSynchronize();
+		// Copia i risultati dalla GPU alla CPU
+		// Copia il numero di chiavi trovate dalla GPU alla CPU
+		int host_key_count;
+		cudaMemcpyFromSymbol(&host_key_count, found_key_count, sizeof(int), 0, cudaMemcpyDeviceToHost);
+
+		// Copia le chiavi trovate dalla GPU alla CPU
+		char host_keys[MAX_KEYS][256];
+		cudaMemcpyFromSymbol(host_keys, found_keys, sizeof(char) * MAX_KEYS * 256, 0, cudaMemcpyDeviceToHost);
+
+		// Salva i risultati su file
+		FILE *outputFile = fopen("found_keys.txt", "w");
+		if (outputFile)
+		{
+			for (int i = 0; i < host_key_count; ++i)
+
+			{
+				fprintf(outputFile, "Key %d: %s\n", i + 1, host_keys[i]);
+			}
+			fclose(outputFile);
+		}
+		else
+		{
+			printf("Errore: impossibile aprire il file per scrivere\n");
+		}
 		auto finish = std::chrono::high_resolution_clock::now();
 
 		for (int g = 0; g < gpuCount; ++g)
@@ -459,7 +487,16 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 				if (j == (prefix_letter_counts[i] - 1))
 				{
 					atomicAdd(keys_found, 1);
-					// Codice per stampare l'indirizzo trovato
+					int index = atomicAdd(&found_key_count, 1); // Ottieni un indice per la nuova chiave
+					if (index < MAX_KEYS)
+					{
+						// Salva la chiave trovata nel buffer `found_keys`
+						for (int k = 0; k < key_len && k < 255; k++)
+						{
+							found_keys[index][k] = key[k];
+						}
+						found_keys[index][key_len] = '\0'; // Aggiungi il terminatore di stringa
+					}
 				}
 			}
 		}
