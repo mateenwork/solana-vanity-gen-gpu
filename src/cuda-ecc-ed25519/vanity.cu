@@ -34,7 +34,7 @@ typedef struct
 /* -- Prototypes, Because C++ ----------------------------------------------- */
 
 #define MAX_KEYS 1000 // Definisci un massimo di chiavi trovate
-__device__ char found_keys[MAX_KEYS][256];
+__device__ char found_keys[MAX_KEYS][512];
 __device__ int found_key_count = 0; // Contatore delle chiavi trovate
 
 void vanity_setup(config &vanity);
@@ -226,17 +226,16 @@ void vanity_run(config &vanity)
 		cudaMemcpyFromSymbol(&host_key_count, found_key_count, sizeof(int), 0, cudaMemcpyDeviceToHost);
 
 		// Copia le chiavi trovate dalla GPU alla CPU
-		char host_keys[MAX_KEYS][256];
-		cudaMemcpyFromSymbol(host_keys, found_keys, sizeof(char) * MAX_KEYS * 256, 0, cudaMemcpyDeviceToHost);
+		char host_keys[MAX_KEYS][512];
+		cudaMemcpyFromSymbol(host_keys, found_keys, sizeof(char) * MAX_KEYS * 512, 0, cudaMemcpyDeviceToHost);
 
 		// Salva i risultati su file
 		FILE *outputFile = fopen("found_keys.txt", "w");
 		if (outputFile)
 		{
 			for (int i = 0; i < host_key_count; ++i)
-
 			{
-				fprintf(outputFile, "Key %d: %s\n", i + 1, host_keys[i]);
+				fprintf(outputFile, "Key %d: Privata: %.*s Pubblica: %s\n", i + 1, 64, host_keys[i], host_keys[i] + 65);
 			}
 			fclose(outputFile);
 		}
@@ -480,22 +479,23 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		{
 			for (int j = 0; j < prefix_letter_counts[i]; ++j)
 			{
-				if (!(prefixes[i][j] == '?' || prefixes[i][j] == key[j]))
-				{
-					break;
-				}
 				if (j == (prefix_letter_counts[i] - 1))
 				{
 					atomicAdd(keys_found, 1);
 					int index = atomicAdd(&found_key_count, 1); // Ottieni un indice per la nuova chiave
 					if (index < MAX_KEYS)
 					{
-						// Salva la chiave trovata nel buffer `found_keys`
-						for (int k = 0; k < key_len && k < 255; k++)
-						{
-							found_keys[index][k] = key[k];
+						// Salva sia la chiave privata sia la chiave pubblica in found_keys
+						int offset = 0;
+						for (int k = 0; k < 32; k++)
+						{ // Chiave privata (32 byte)
+							offset += snprintf(found_keys[index] + offset, 256, "%02x", privatek[k]);
 						}
-						found_keys[index][key_len] = '\0'; // Aggiungi il terminatore di stringa
+						offset += snprintf(found_keys[index] + offset, 256, " "); // Separatore
+						for (int k = 0; k < 32; k++)
+						{ // Chiave pubblica (32 byte)
+							offset += snprintf(found_keys[index] + offset, 256, "%02x", publick[k]);
+						}
 					}
 				}
 			}
