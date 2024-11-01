@@ -475,27 +475,39 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		reverse_string(key, key_len);
 
 		// Usa il confronto del prefisso esistente (ora funziona per il suffisso)
+		// Usa il confronto per il suffisso esistente
 		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
 		{
-			for (int j = 0; j < prefix_letter_counts[i]; ++j)
+			int prefix_len = prefix_letter_counts[i];
+
+			// Inizia il confronto partendo dagli ultimi caratteri di `key`
+			bool match = true;
+			for (int j = 0; j < prefix_len; ++j)
 			{
-				if (j == (prefix_letter_counts[i] - 1))
+				// Confronto dal fondo della stringa `key`
+				if (!(prefixes[i][prefix_len - j - 1] == '?' || prefixes[i][prefix_len - j - 1] == key[key_len - j - 1]))
 				{
-					atomicAdd(keys_found, 1);
-					int index = atomicAdd(&found_key_count, 1); // Ottieni un indice per la nuova chiave
-					if (index < MAX_KEYS)
-					{
-						// Salva sia la chiave privata sia la chiave pubblica in found_keys
-						int offset = 0;
-						for (int k = 0; k < 32; k++)
-						{ // Chiave privata (32 byte)
-							offset += snprintf(found_keys[index] + offset, 256, "%02x", privatek[k]);
-						}
-						offset += snprintf(found_keys[index] + offset, 256, " "); // Separatore
-						for (int k = 0; k < 32; k++)
-						{ // Chiave pubblica (32 byte)
-							offset += snprintf(found_keys[index] + offset, 256, "%02x", publick[k]);
-						}
+					match = false;
+					break;
+				}
+			}
+
+			if (match)
+			{
+				atomicAdd(keys_found, 1);
+				int index = atomicAdd(&found_key_count, 1); // Ottieni un indice per la nuova chiave
+				if (index < MAX_KEYS)
+				{
+					// Salva sia la chiave privata sia la chiave pubblica in found_keys
+					int offset = 0;
+					for (int k = 0; k < 32; k++)
+					{ // Chiave privata (32 byte)
+						offset += snprintf(found_keys[index] + offset, 256, "%02x", privatek[k]);
+					}
+					offset += snprintf(found_keys[index] + offset, 256, " "); // Separatore
+					for (int k = 0; k < 32; k++)
+					{ // Chiave pubblica (32 byte)
+						offset += snprintf(found_keys[index] + offset, 256, "%02x", publick[k]);
 					}
 				}
 			}
