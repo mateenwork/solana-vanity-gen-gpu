@@ -31,7 +31,7 @@ void vanity_setup(config &vanity);
 void vanity_run(config &vanity);
 void __global__ vanity_init(curandState *state);
 void __global__ vanity_scan(curandState *state, int key_length);
-bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
+bool __host__ __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
 
 /* -- Entry Point ----------------------------------------------------------- */
 int main(int argc, char const *argv[])
@@ -260,7 +260,7 @@ void __global__ vanity_scan(curandState *state, int key_length)
 	state[id] = localState;
 }
 
-bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz)
+bool __host__ __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz)
 {
 	const char b58digits_ordered[] = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
