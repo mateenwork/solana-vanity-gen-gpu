@@ -135,14 +135,12 @@ void __global__ vanity_scan(curandState *state, int key_length)
 {
 	int id = threadIdx.x + (blockIdx.x * blockDim.x);
 
-	// Local Kernel State
 	ge_p3 A;
 	curandState localState = state[id];
 	unsigned char seed[32] = {0};
 	unsigned char publick[32] = {0};
 	unsigned char privatek[64] = {0};
 	char key[256] = {0};
-	char pkey[256] = {0};
 
 	for (int i = 0; i < 32; ++i)
 	{
@@ -151,7 +149,6 @@ void __global__ vanity_scan(curandState *state, int key_length)
 		seed[i] = keybyte;
 	}
 
-	size_t keys_found = 0;
 	sha512_context md;
 
 	for (int attempts = 0; attempts < 100000; ++attempts)
@@ -241,8 +238,6 @@ void __global__ vanity_scan(curandState *state, int key_length)
 
 		size_t keysize = 256;
 		b58enc(key, &keysize, publick, 32);
-
-		printf("(%lu): %s - %s\n", keysize, key, pkey);
 
 		// Controllo del suffisso "pump"
 		bool has_suffix = (key[key_length - 4] == 'p' &&
