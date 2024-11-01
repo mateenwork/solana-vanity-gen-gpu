@@ -161,6 +161,15 @@ void vanity_run(config &vanity)
 	int keys_found_this_iteration;
 	int *dev_keys_found[100]; // not more than 100 GPUs ok!
 
+	int keys_found_total = 0;
+	int keys_found_this_iteration;
+	int *dev_keys_found[100]; // not more than 100 GPUs ok!
+
+// Definisci la struttura per salvare le chiavi
+#define MAX_KEYS 1000				// Limite per il numero di chiavi da salvare
+	char saved_keys[MAX_KEYS][256]; // Array per salvare le chiavi
+	int key_index = 0;				// Indice per la chiave salvata
+
 	for (int i = 0; i < MAX_ITERATIONS; ++i)
 	{
 		auto start = std::chrono::high_resolution_clock::now();
@@ -218,6 +227,24 @@ void vanity_run(config &vanity)
 			   executions_this_iteration / elapsed.count(),
 			   executions_total,
 			   keys_found_total);
+
+		// Codice per scrivere le chiavi trovate nel file
+		if (i == MAX_ITERATIONS - 1)
+		{ // Scrivi solo alla fine dell'ultima iterazione
+			FILE *file = fopen("found_keys.txt", "w");
+			if (file != NULL)
+			{
+				for (int j = 0; j < key_index; j++)
+				{
+					fprintf(file, "%s\n", saved_keys[j]);
+				}
+				fclose(file);
+			}
+			else
+			{
+				printf("Errore nell'aprire il file per la scrittura.\n");
+			}
+		}
 
 		if (keys_found_total >= STOP_AFTER_KEYS_FOUND)
 		{
