@@ -51,6 +51,7 @@ int main(int argc, char const *argv[])
 {
 	ed25519_set_verbose(true);
 
+	config vanity;
 	vanity_setup(vanity);
 	vanity_run(vanity);
 
