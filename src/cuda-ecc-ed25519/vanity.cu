@@ -72,7 +72,7 @@ unsigned long long int makeSeed()
 
 	std::random_device rd;
 
-	for (unsigned int b = 0; b < sizeof(seed); b++)
+	for (int n = 0; n < MAX_PATTERNS; ++n)
 	{
 		auto r = rd();
 		char *entropy = (char *)&r;
@@ -423,7 +423,7 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 
-		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
+		for (int i = 0; i < MAX_PATTERNS; ++i)
 		{
 			int suffix_length = prefix_letter_counts[i];
 			int start_pos = keysize - suffix_length;
