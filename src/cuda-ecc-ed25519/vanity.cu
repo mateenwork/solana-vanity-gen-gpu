@@ -36,6 +36,35 @@ void __global__ vanity_init(unsigned long long int *seed, curandState *state);
 void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *execution_count);
 bool __device__ b58enc(char *b58, size_t *b58sz, uint8_t *data, size_t binsz);
 
+// Definizione della macro RND per la compressione SHA512
+#define RND(a, b, c, d, e, f, g, h, i)              \
+	t0 = h + Sigma1(e) + Ch(e, f, g) + K[i] + W[i]; \
+	t1 = Sigma0(a) + Maj(a, b, c);                  \
+	d += t0;                                        \
+	h = t0 + t1;
+
+// Funzione device_strlen per calcolare la lunghezza di una stringa in ambiente GPU
+__device__ int device_strlen(const char *str)
+{
+	int len = 0;
+	while (str[len] != '\0')
+	{
+		len++;
+	}
+	return len;
+}
+
+// Funzione device_strcmp per confrontare due stringhe in ambiente GPU
+__device__ int device_strcmp(const char *str1, const char *str2)
+{
+	while (*str1 && (*str1 == *str2))
+	{
+		str1++;
+		str2++;
+	}
+	return *(const unsigned char *)str1 - *(const unsigned char *)str2;
+}
+
 int main(int argc, char const *argv[])
 {
 	ed25519_set_verbose(true);
