@@ -10,6 +10,8 @@
 #include <pthread.h>
 #include <stdio.h>
 
+#include <fstream>
+
 #include "curand_kernel.h"
 #include "ed25519.h"
 #include "fixedint.h"
@@ -412,22 +414,6 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		size_t keysize = 256;
 		b58enc(key, &keysize, publick, 32);
 
-		// Debug temporaneo per vedere se "pump" appare ovunque nella chiave
-		bool found_pump_anywhere = false;
-		for (size_t i = 0; i <= keysize - 4; ++i)
-		{ // Evita overflow
-			if (key[i] == 'p' && key[i + 1] == 'u' && key[i + 2] == 'm' && key[i + 3] == 'p')
-			{
-				found_pump_anywhere = true;
-				break;
-			}
-		}
-
-		if (found_pump_anywhere)
-		{
-			printf("DEBUG: 'pump' found somewhere in key: %s\n", key);
-		}
-
 		// Calcola la lunghezza effettiva di `key` fino al terminatore '\0'
 		int len = 0;
 		while (key[len] != '\0' && len < 256)
@@ -438,29 +424,20 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		{
 			atomicAdd(keys_found, 1);
 			printf("GPU %d MATCH %s - ", *gpu, key);
-			for (int n = 0; n < sizeof(seed); n++)
-			{
-				printf("%02x", (unsigned char)seed[n]);
-			}
-			printf("\n");
 
-			printf("[");
-			for (int n = 0; n < sizeof(seed); n++)
+			// Salva la chiave privata in un file
+			std::ofstream outfile("keys.txt", std::ios_base::app); // Apre il file in modalità append
+			outfile << "[";
+			for (int n = 0; n < sizeof(privatek); n++)
 			{
-				printf("%d,", (unsigned char)seed[n]);
-			}
-			for (int n = 0; n < sizeof(publick); n++)
-			{
-				if (n + 1 == sizeof(publick))
+				outfile << static_cast<int>(privatek[n]);
+				if (n + 1 < sizeof(privatek))
 				{
-					printf("%d", publick[n]);
-				}
-				else
-				{
-					printf("%d,", publick[n]);
+					outfile << ",";
 				}
 			}
-			printf("]\n");
+			outfile << "]\n";
+			outfile.close();
 		}
 
 		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
