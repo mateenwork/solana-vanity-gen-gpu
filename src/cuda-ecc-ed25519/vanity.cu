@@ -421,9 +421,11 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// so it might make sense to write a new parallel kernel to do
 		// this.
 
-		// Lunghezza del suffisso da cercare ("pump" è lungo 4 caratteri)
-		int suffix_len = 4;
-		if (strncmp(&key[strlen(key) - suffix_len], "pump", suffix_len) == 0)
+		// Lunghezza del suffisso da cercare
+		int suffix_len = 4; // "pump" è lungo 4 caratteri
+
+		// Confronta manualmente gli ultimi 4 caratteri di `key` con "pump"
+		if (key[252] == 'p' && key[253] == 'u' && key[254] == 'm' && key[255] == 'p')
 		{
 			atomicAdd(keys_found, 1);
 			printf("GPU %d MATCH %s - ", *gpu, key);
