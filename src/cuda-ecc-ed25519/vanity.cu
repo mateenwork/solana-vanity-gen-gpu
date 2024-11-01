@@ -77,6 +77,17 @@ unsigned long long int makeSeed()
 	return seed;
 }
 
+// Funzione per invertire manualmente la stringa in-place
+__device__ void reverse_string(char *str, size_t len)
+{
+	for (size_t i = 0; i < len / 2; ++i)
+	{
+		char temp = str[i];
+		str[i] = str[len - i - 1];
+		str[len - i - 1] = temp;
+	}
+}
+
 /* -- Vanity Step Functions ------------------------------------------------- */
 
 void vanity_setup(config &vanity)
@@ -422,7 +433,8 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 		// this.
 
 		// Inverti l'indirizzo generato in modo da verificare il suffisso come se fosse un prefisso
-		std::reverse(key, key + strlen(key));
+		size_t key_len = strlen(key);
+		reverse_string(key, key_len);
 
 		// Usa il confronto del prefisso esistente (ora funziona per il suffisso)
 		for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i)
