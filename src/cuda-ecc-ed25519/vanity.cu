@@ -342,7 +342,7 @@ void __global__ vanity_scan(curandState *state)
 				keys_found += 1;
 				size_t pkeysize = 256;
 				b58enc(pkey, &pkeysize, seed, 32);
-				printf("(%d): %s - %s\n", keysize, key, pkey);
+				printf("(%lu): %s - %s\n", keysize, key, pkey);
 			}
 		}
 
