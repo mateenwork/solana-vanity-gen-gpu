@@ -428,8 +428,13 @@ void __global__ vanity_scan(curandState *state, int *keys_found, int *gpu, int *
 			printf("DEBUG: 'pump' found somewhere in key: %s\n", key);
 		}
 
+		// Calcola la lunghezza effettiva di `key` fino al terminatore '\0'
+		int len = 0;
+		while (key[len] != '\0' && len < 256)
+			len++;
+
 		// Continua con il normale controllo del suffisso
-		if (keysize >= 4 && key[keysize - 4] == 'p' && key[keysize - 3] == 'u' && key[keysize - 2] == 'm' && key[keysize - 1] == 'p')
+		if (len >= 4 && key[len - 4] == 'p' && key[len - 3] == 'u' && key[len - 2] == 'm' && key[len - 1] == 'p')
 		{
 			atomicAdd(keys_found, 1);
 			printf("GPU %d MATCH %s - ", *gpu, key);
