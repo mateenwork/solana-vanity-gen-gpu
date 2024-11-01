@@ -242,6 +242,8 @@ void __global__ vanity_scan(curandState *state, int key_length)
 		size_t keysize = 256;
 		b58enc(key, &keysize, publick, 32);
 
+		printf("(%lu): %s - %s\n", keysize, key, pkey);
+
 		// Controllo del suffisso "pump"
 		bool has_suffix = (key[key_length - 4] == 'p' &&
 						   key[key_length - 3] == 'u' &&
