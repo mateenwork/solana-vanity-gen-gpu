@@ -1,5 +1,10 @@
-ssh -i s -p 39449 root@211.21.106.84 -L 8080:localhost:8080
+ssh -i ssh_private -p 46418 root@24.52.17.82 -L 8080:localhost:8080
 git clone https://github.com/mateenwork/solana-vanity-gen-gpu.git
 export PATH=/usr/local/cuda/bin:$PATH
 make -j$(nproc)
 LD_LIBRARY_PATH=./src/release ./src/release/cuda_ed25519_vanity
+
+
+
+ssh -i ssh_private -p 39361 root@211.21.106.84 -L 8080:localhost:8080
+ssh -i ssh_private -p 11330 root@172.219.157.164 -L 8080:localhost:8080

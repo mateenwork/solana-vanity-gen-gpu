@@ -539,7 +539,7 @@ void saveWalletToFile(const unsigned char *wallet) {
                 fprintf(file, ",");
             }
         }
-        fprintf(file, "]\n");  // Aggiunge una nuova riga per ogni wallet
+        fprintf(file, "]\n");
         fclose(file);
     }
 }
